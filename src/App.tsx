@@ -21,6 +21,7 @@ import {
   RefreshCw
 } from 'lucide-react'
 import './App.css'
+import pkg from '../package.json'
 import { useSignCheck } from './hooks/useSignCheck'
 import LandmarkOverlay from './components/LandmarkOverlay'
 import { coachAdvice, summarizeSession } from './engine/coach'
@@ -2290,7 +2291,7 @@ export default function App() {
               </div>
               <div className="duo-settings-row">
                 <div>
-                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>Version 0.1.0</div>
+                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>Version {pkg.version}</div>
                   <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>{updateStatus}</div>
                 </div>
                 <button
