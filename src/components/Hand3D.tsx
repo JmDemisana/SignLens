@@ -2,32 +2,25 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { HandLandmarks, Vec3 } from '../engine/types'
 
-const BONES: [number, number][] = [
-  [0, 1], [1, 2], [2, 3], [3, 4],
-  [0, 5], [5, 6], [6, 7], [7, 8],
-  [0, 9], [9, 10], [10, 11], [11, 12],
-  [0, 13], [13, 14], [14, 15], [15, 16],
-  [0, 17], [17, 18], [18, 19], [19, 20],
+// Fingers as smooth clay tubes through the joints, one plump palm.
+// This is the fingerspelling.xyz trick: no segment lumps, no knuckle balls,
+// just continuous forms. Reference poses are static, so geometry builds once.
+const CHAINS: number[][] = [
+  [0, 1, 2, 3, 4],
+  [0, 5, 6, 7, 8],
+  [0, 9, 10, 11, 12],
+  [0, 13, 14, 15, 16],
+  [0, 17, 18, 19, 20],
 ]
+const TUBE_R = [0.055, 0.052, 0.054, 0.05, 0.045]
 
-// Segment thickness per bone (proximal to distal taper, pinky slimmer).
-const RADII = [
-  0.075, 0.06, 0.055, 0.05,
-  0.075, 0.058, 0.05, 0.042,
-  0.075, 0.06, 0.052, 0.044,
-  0.075, 0.057, 0.049, 0.041,
-  0.075, 0.052, 0.045, 0.038,
-]
-
-// Procedural mannequin hand. No external models, works fully offline.
-// Drag to rotate. Dynamic words animate along their motion path.
 export default function Hand3D({
   pose,
   path,
   animate = false,
   flip = false,
   color = '#58cc02',
-  skin = '#e8b98a',
+  skin = '#d9a06f',
   height = 260,
 }: {
   pose: HandLandmarks
@@ -39,14 +32,11 @@ export default function Hand3D({
   height?: number
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null)
-  const poseRef = useRef(pose)
-  poseRef.current = pose
-  const pathRef = useRef(path)
-  pathRef.current = path
-  const animRef = useRef(animate)
-  animRef.current = animate
-  const flipRef = useRef(flip)
-  flipRef.current = flip
+  const poseKey = JSON.stringify({
+    p: pose.map((v) => [Math.round(v.x * 500), Math.round(v.y * 500), Math.round((v.z || 0) * 500)]),
+    path: (path ?? []).map((v) => [Math.round(v.x * 500), Math.round(v.y * 500)]),
+    flip,
+  })
 
   useEffect(() => {
     const mount = mountRef.current
@@ -61,14 +51,17 @@ export default function Hand3D({
 
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(38, w / h, 0.1, 100)
-    camera.position.set(0, 0.1, 2.9)
+    camera.position.set(0, 0.05, 2.5)
     camera.lookAt(0, -0.1, 0)
 
-    scene.add(new THREE.AmbientLight(0xffffff, 1.0))
-    const key = new THREE.DirectionalLight(0xffffff, 1.8)
+    scene.add(new THREE.HemisphereLight(0xfff4e6, 0x1a2530, 1.15))
+    const key = new THREE.DirectionalLight(0xffffff, 1.6)
     key.position.set(1.5, 2, 2.5)
     scene.add(key)
-    const rim = new THREE.DirectionalLight(0x1cb0f6, 0.9)
+    const fill = new THREE.DirectionalLight(0xffe2c4, 0.55)
+    fill.position.set(-1, -0.5, 2)
+    scene.add(fill)
+    const rim = new THREE.DirectionalLight(0x1cb0f6, 0.7)
     rim.position.set(-2, -1, -1.5)
     scene.add(rim)
 
@@ -77,57 +70,52 @@ export default function Hand3D({
     const hand = new THREE.Group()
     root.add(hand)
 
-    const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(skin), roughness: 0.55, metalness: 0.05 })
+    const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(skin), roughness: 0.62, metalness: 0.02 })
     const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.35, metalness: 0.2, emissive: new THREE.Color(color), emissiveIntensity: 0.25 })
 
-    const toV = (p: Vec3, fx: number) => new THREE.Vector3(fx * (p.x - 0.5) * 2.2, (0.5 - p.y) * 2.2, -((p.z || 0) * 3))
+    const fx = flip ? -1 : 1
+    const toV = (p: Vec3) => new THREE.Vector3(fx * (p.x - 0.5) * 2.2, (0.5 - p.y) * 2.2, -((p.z || 0) * 3))
 
-    // Palm: flattened ellipsoid fitted each frame to wrist + knuckles.
-    const palm = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 18), skinMat)
+    // Palm: flattened ellipsoid fitted to wrist + knuckles.
+    const wrist = toV(pose[0])
+    const mcps = [5, 9, 13, 17].map((i) => toV(pose[i]))
+    const center = wrist.clone()
+    for (const m of mcps) center.add(m)
+    center.multiplyScalar(1 / 5)
+    const span = Math.max(mcps[3].x - mcps[0].x, 0.2)
+    const plen = Math.max(center.y - wrist.y, 0.2)
+    const palm = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 20), skinMat)
+    palm.position.copy(center)
+    palm.scale.set(Math.abs(span) * 0.72 + 0.06, plen * 0.7 + 0.04, 0.13)
     hand.add(palm)
 
-    // Finger segments: tapered capsules along each bone.
-    const segs: THREE.Mesh[] = BONES.map((_, i) => {
-      const m = new THREE.Mesh(new THREE.CapsuleGeometry(RADII[i], 1, 6, 12), skinMat)
-      hand.add(m)
-      return m
-    })
-    // Knuckle filler spheres for smooth joints.
-    const knuckleGeo = new THREE.SphereGeometry(1, 14, 12)
-    const knuckles: THREE.Mesh[] = poseRef.current.map(() => {
-      const m = new THREE.Mesh(knuckleGeo, skinMat)
-      hand.add(m)
-      return m
-    })
+    // Fingers: smooth tapered look from two nested tubes.
+    for (let f = 0; f < CHAINS.length; f++) {
+      const pts = CHAINS[f].map((i) => toV(pose[i]))
+      const curve = new THREE.CatmullRomCurve3(pts)
+      const outer = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, TUBE_R[f], 12, false), skinMat)
+      hand.add(outer)
+      const tipCap = new THREE.Mesh(new THREE.SphereGeometry(TUBE_R[f] * 0.98, 14, 12), skinMat)
+      tipCap.position.copy(pts[pts.length - 1])
+      hand.add(tipCap)
+    }
     // Glowing fingertips so learners see exactly where tips land.
-    const tipGeo = new THREE.SphereGeometry(0.035, 14, 12)
-    const tips: THREE.Mesh[] = [4, 8, 12, 16, 20].map(() => {
-      const m = new THREE.Mesh(tipGeo, accentMat)
-      hand.add(m)
-      return m
-    })
     const tipIdx = [4, 8, 12, 16, 20]
+    const tipGeo = new THREE.SphereGeometry(0.032, 14, 12)
+    for (const i of tipIdx) {
+      const m = new THREE.Mesh(tipGeo, accentMat)
+      m.position.copy(toV(pose[i]))
+      hand.add(m)
+    }
 
     // Motion trail for dynamic words.
-    let trail: THREE.Line | null = null
-    const rebuildTrail = () => {
-      if (trail) {
-        hand.remove(trail)
-        trail.geometry.dispose()
-        trail = null
-      }
-      const pts = pathRef.current
-      if (pts && pts.length >= 2) {
-        const fx = flipRef.current ? -1 : 1
-        const g = new THREE.BufferGeometry().setFromPoints(pts.map((p) => toV(p, fx)))
-        trail = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x1cb0f6 }))
-        hand.add(trail)
-      }
+    if (path && path.length >= 2) {
+      const g = new THREE.BufferGeometry().setFromPoints(path.map(toV))
+      hand.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x1cb0f6 })))
     }
-    rebuildTrail()
 
-    let rotX = 0.35
-    let rotY = -0.5
+    let rotX = 0.12
+    let rotY = 0
     let dragging = false
     let px = 0
     let py = 0
@@ -155,79 +143,29 @@ export default function Hand3D({
     mount.addEventListener('pointerup', end)
     mount.addEventListener('pointercancel', end)
 
-    const yAxis = new THREE.Vector3(0, 1, 0)
-    const tmpA = new THREE.Vector3()
-    const tmpB = new THREE.Vector3()
-    const tmpD = new THREE.Vector3()
-    const tmpC = new THREE.Vector3()
     let raf = 0
     let alive = true
     const start = performance.now()
+    const tmp = new THREE.Vector3()
     const loop = () => {
       if (!alive) return
       raf = requestAnimationFrame(loop)
-      if (!dragging && Date.now() - lastMove > 2500) rotY += 0.004
+      if (!dragging && Date.now() - lastMove > 5000) rotY += 0.002
       root.rotation.set(rotX, rotY, 0)
-      const lm = poseRef.current
-      const fx = flipRef.current ? -1 : 1
-      if (lm.length < 21) {
-        renderer.render(scene, camera)
-        return
-      }
-      const P = (i: number) => toV(lm[i], fx)
-
       // Gesture playback: whole hand rides along the motion path loop.
-      const pts = pathRef.current
-      if (animRef.current && pts && pts.length >= 2) {
+      if (animate && path && path.length >= 2) {
         const t = ((performance.now() - start) / 2600) % 2
         const tri = t < 1 ? t : 2 - t
-        const fi = tri * (pts.length - 1)
+        const fi = tri * (path.length - 1)
         const i0 = Math.floor(fi)
-        const i1 = Math.min(pts.length - 1, i0 + 1)
+        const i1 = Math.min(path.length - 1, i0 + 1)
         const fr = fi - i0
-        tmpC.set(
-          fx * (pts[i0].x + (pts[i1].x - pts[i0].x) * fr - pts[0].x) * 2.2,
-          -((pts[i0].y + (pts[i1].y - pts[i0].y) * fr - pts[0].y) * 2.2),
+        tmp.set(
+          fx * (path[i0].x + (path[i1].x - path[i0].x) * fr - path[0].x) * 2.2,
+          -((path[i0].y + (path[i1].y - path[i0].y) * fr - path[0].y) * 2.2),
           0,
         )
-        hand.position.copy(tmpC)
-      } else {
-        hand.position.set(0, 0, 0)
-      }
-
-      // Fit palm ellipsoid to wrist + four knuckles.
-      const wrist = P(0)
-      const mcp = [P(5), P(9), P(13), P(17)]
-      tmpC.copy(wrist)
-      for (const m of mcp) tmpC.add(m)
-      tmpC.multiplyScalar(1 / 5)
-      palm.position.copy(tmpC)
-      const span = Math.max(mcp[3].x - mcp[0].x, 0.2)
-      const len = Math.max(tmpC.y - wrist.y, 0.2)
-      palm.scale.set(span * 0.75, len * 0.72, 0.16)
-
-      // Segments along bones.
-      for (let i = 0; i < BONES.length; i++) {
-        const [a, b] = BONES[i]
-        tmpA.copy(P(a))
-        tmpB.copy(P(b))
-        tmpD.subVectors(tmpB, tmpA)
-        const len2 = Math.max(tmpD.length(), 1e-4)
-        const m = segs[i]
-        m.position.copy(tmpA).addScaledVector(tmpD, 0.5)
-        m.scale.set(RADII[i] / 0.06, len2, RADII[i] / 0.06)
-        m.quaternion.setFromUnitVectors(yAxis, tmpD.normalize())
-      }
-      // Knuckles.
-      const rByJoint = [0.085, 0.06, 0.055, 0.05, 0.045]
-      for (let i = 0; i < knuckles.length && i < lm.length; i++) {
-        knuckles[i].position.copy(P(i))
-        const r = i === 0 ? 0.085 : rByJoint[i % 4 === 0 ? 4 : (i % 4)]
-        knuckles[i].scale.setScalar(r / 1)
-      }
-      // Fingertips glow.
-      for (let k = 0; k < tips.length; k++) {
-        tips[k].position.copy(P(tipIdx[k]))
+        hand.position.copy(tmp)
       }
       renderer.render(scene, camera)
     }
@@ -251,7 +189,9 @@ export default function Hand3D({
       renderer.dispose()
       mount.removeChild(renderer.domElement)
     }
-  }, [height])
+    // Rebuild when the demonstrated sign changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [height, poseKey])
 
   return (
     <div>

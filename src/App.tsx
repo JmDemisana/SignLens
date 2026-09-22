@@ -30,6 +30,7 @@ import { FSL_DEFINITIONS } from './engine/fsl'
 import { getProgress, recordAttempt, masteryFor, totalXP, touchToday } from './engine/progress'
 import type { SignLang } from './engine/types'
 import Hand3D from './components/Hand3D'
+import LiveCoachPanel from './components/LiveCoachPanel'
 import { definitionFor, speak } from './engine/dictionary'
 import { referencePose } from './engine/referenceHands'
 import type { ScoreDetail, Vec3, HandLandmarks } from './engine/types'
@@ -322,6 +323,10 @@ export default function App() {
   const liveAdvice =
     live.detail && findTemplate(learnTarget)
       ? coachAdvice(live.detail, findTemplate(learnTarget)!.hint)
+      : 'Show your hand in frame to start live scoring.'
+  const alphaAdvice =
+    alpha.detail && findTemplate(selectedLetter)
+      ? coachAdvice(alpha.detail, findTemplate(selectedLetter)!.hint)
       : 'Show your hand in frame to start live scoring.'
 
   const pickUnit = (i: number) => {
@@ -1172,6 +1177,8 @@ export default function App() {
                   </span>
                 </div>
 
+                <LiveCoachPanel detail={live.detail} landmarks={live.landmarks} advice={liveAdvice} />
+
                 <div
                   style={{
                     background: '#131f24',
@@ -1750,6 +1757,19 @@ export default function App() {
                     {holdMs >= 2000 ? 'Hold complete! Nice muscle memory.' : 'Steady Hold'}
                   </span>
                 </div>
+
+                <LiveCoachPanel
+                  detail={alpha.detail}
+                  landmarks={alpha.landmarks}
+                  advice={alphaAdvice}
+                  holdLabel={
+                    holdMs >= 2000
+                      ? 'Hold complete! Nice muscle memory.'
+                      : alpha.detail && alpha.detail.passed
+                        ? `Holding... ${Math.round(holdMs / 100) / 10}s / 2s to lock mastery`
+                        : 'Reach 80%+ to start the 2s mastery timer'
+                  }
+                />
 
                 <button
                   className="duo-btn duo-btn-green"
