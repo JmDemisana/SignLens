@@ -31,9 +31,10 @@ import { FSL_DEFINITIONS } from './engine/fsl'
 import { getProgress, recordAttempt, masteryFor, totalXP, touchToday } from './engine/progress'
 import { getPersonalAngles, savePersonalAngles, clearPersonalAngles, isCalibrated } from './engine/personal'
 import type { SignLang } from './engine/types'
-import Hand3D from './components/Hand3D'
+import HandModel from './components/HandModel'
 import LiveCoachPanel from './components/LiveCoachPanel'
-import { definitionFor, speak } from './engine/dictionary'
+import { definitionFor, speak, howToFor, relatedFor } from './engine/dictionary'
+import { getPracticeList, addToPracticeList, practiceListItems } from './engine/practice'
 import { referencePose } from './engine/referenceHands'
 import type { ScoreDetail, Vec3, HandLandmarks } from './engine/types'
 
@@ -99,6 +100,18 @@ export default function App() {
   const [selectedLetter, setSelectedLetter] = useState('B')
   const [filter, setFilter] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [practiceCount, setPracticeCount] = useState(() => getPracticeList().length)
+  const [addedFlash, setAddedFlash] = useState<string | null>(null)
+
+  const startPracticeList = () => {
+    const items = practiceListItems()
+    if (!items.length) return
+    setUnitIdx(-1)
+    setLesson(createLesson(items))
+    setHistory([])
+    setHearts(5)
+    navigateTo('learn_mirror_prompt')
+  }
 
   const finishOnboarding = () => {
     try {
@@ -174,6 +187,8 @@ export default function App() {
   const [lesson, setLesson] = useState(() => createLesson(curriculumForLang('ASL')[0].items))
   const [history, setHistory] = useState<ScoreDetail[]>([])
   const [hearts, setHearts] = useState(5)
+  // unitIdx -1 = personal practice list started from the Dictionary.
+  const unitLabel = unitIdx >= 0 ? curriculum[unitIdx].unit : `My Practice List (${lesson.t} signs)`
   const lessonItem = currentItem(lesson)
   const learnTarget = lessonItem ? lessonItem.id : 'C'
 
@@ -943,9 +958,9 @@ export default function App() {
               <div className="duo-unit-banner">
                 <div>
                   <div style={{ fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 800 }}>
-                    {lang} • {curriculum[unitIdx].unit}
+                    {lang} • {unitLabel}
                   </div>
-                  <div className="duo-unit-title">{curriculum[unitIdx].items.map((i) => i.label).join(' • ')}</div>
+                  <div className="duo-unit-title">{unitIdx >= 0 ? curriculum[unitIdx].items.map((i) => i.label).join(' • ') : lesson.queue.map((i) => i.label).join(' • ')}</div>
                   <div className="duo-unit-desc">
                     {lesson.t - lesson.n + 1 > 0
                       ? `Question ${lesson.n} of ${lesson.t} in the queue. Misses loop back until all pass.`
@@ -970,6 +985,41 @@ export default function App() {
                   onClick={() => navigateTo('learn_mirror_prompt')}
                 >
                   Guidebook
+                </button>
+              </div>
+
+              {/* Personal practice list saved from the Dictionary */}
+              <div
+                style={{
+                  background: 'var(--duo-card)',
+                  border: '2px solid var(--duo-border)',
+                  borderRadius: '20px',
+                  padding: '18px 24px',
+                  marginBottom: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '15px', fontWeight: 900, color: '#ffffff' }}>
+                    My Practice List ({practiceCount})
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
+                    {practiceCount > 0
+                      ? getPracticeList().slice(0, 6).join(' • ') + (practiceCount > 6 ? ' • …' : '')
+                      : 'Save signs from the Dictionary to drill them here.'}
+                  </div>
+                </div>
+                <button
+                  className="duo-btn duo-btn-green"
+                  style={{ padding: '10px 22px' }}
+                  disabled={practiceCount === 0}
+                  onClick={startPracticeList}
+                >
+                  Drill My List
                 </button>
               </div>
 
@@ -1088,7 +1138,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="duo-question-title">Sign {learnTarget} in the camera mirror (Q{lesson.n}/{lesson.t} • {CURRICULUM[unitIdx].unit})</div>
+            <div className="duo-question-title">Sign {learnTarget} in the camera mirror (Q{lesson.n}/{lesson.t} • {unitLabel})</div>
 
             {/* Quiz Body */}
             <div className="duo-quiz-body">
@@ -1167,7 +1217,7 @@ export default function App() {
                   <span style={{ fontSize: '11px', fontWeight: 800, color: '#1cb0f6', textTransform: 'uppercase' }}>
                     3D Reference • drag to rotate
                   </span>
-                  <Hand3D
+                  <HandModel
                     pose={referencePose(learnTarget)}
                     path={findTemplate(learnTarget)?.path}
                     animate={!!findTemplate(learnTarget)?.path}
@@ -1458,7 +1508,7 @@ export default function App() {
             <div>
               <div className="duo-celebration-title">Lesson Complete!</div>
               <div className="duo-celebration-subtitle">
-                {CURRICULUM[unitIdx].unit} • {history.length} attempts • {sessionSummary}
+                {unitLabel} • {history.length} attempts • {sessionSummary}
               </div>
             </div>
 
@@ -1652,7 +1702,7 @@ export default function App() {
                 >
                   <div style={{ fontSize: '64px', fontWeight: 900, color: '#ffffff', textAlign: 'center', lineHeight: 1 }}>{currentLetter.char}</div>
                   {/* Rotatable 3D reference demo for the selected letter */}
-                  <Hand3D pose={referencePose(currentLetter.char)} flip={hand === 'Left'} height={220} />
+                  <HandModel pose={referencePose(currentLetter.char)} flip={hand === 'Left'} height={220} />
                 </div>
 
                 <div>
@@ -1879,6 +1929,19 @@ export default function App() {
                   {showSkeleton && dictLm && (
                     <LandmarkOverlay lm={dictLm} color={dictBest && dictBest.score >= 80 ? '#58cc02' : '#1cb0f6'} mirrored={isMirrored} />
                   )}
+                  {dictLm && (() => {
+                    const xs = dictLm.map((p) => (isMirrored ? 1 - p.x : p.x) * 800)
+                    const ys = dictLm.map((p) => p.y * 500)
+                    const x0 = Math.max(0, Math.min(...xs) - 24)
+                    const y0 = Math.max(0, Math.min(...ys) - 24)
+                    const x1 = Math.min(800, Math.max(...xs) + 24)
+                    const y1 = Math.min(500, Math.max(...ys) + 24)
+                    return (
+                      <svg className="landmarks-svg-layer" viewBox="0 0 800 500" preserveAspectRatio="none">
+                        <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} rx="14" fill="none" stroke="#58cc02" strokeWidth="2" strokeDasharray="5,5" opacity="0.85" vectorEffect="non-scaling-stroke" />
+                      </svg>
+                    )
+                  })()}
 
                   <div
                     className="duo-camera-badge"
@@ -1986,14 +2049,14 @@ export default function App() {
                       <div style={{ marginTop: '10px', background: '#131f24', border: '2px solid var(--duo-border)', borderRadius: '14px', padding: '12px 16px' }}>
                         <div style={{ fontSize: '12px', fontWeight: 800, color: '#1cb0f6' }}>TEXT MATCH: {match.id}</div>
                         <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>{match.hint}</div>
-                        <Hand3D pose={referencePose(match.id)} path={match.path} flip={hand === 'Left'} height={200} />
+                        <HandModel pose={referencePose(match.id)} path={match.path} flip={hand === 'Left'} height={200} />
                       </div>
                     )
                   })()}
                   {/* 3D demo of the selected sign */}
                   {dictShown && findTemplate(dictShown.id) && (
                     <div style={{ marginTop: '10px' }}>
-                      <Hand3D pose={referencePose(dictShown.id)} path={findTemplate(dictShown.id)!.path} flip={hand === 'Left'} height={220} />
+                      <HandModel pose={referencePose(dictShown.id)} path={findTemplate(dictShown.id)!.path} flip={hand === 'Left'} height={220} />
                     </div>
                   )}
                 </div>
@@ -2031,45 +2094,49 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Motion Breakdown */}
+                {/* Motion Breakdown: real steps for the shown sign */}
                 <div>
                   <div style={{ fontSize: '14px', fontWeight: 900, color: '#ffffff', marginBottom: '8px' }}>
                     How to Form the Sign
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px', color: '#afbac0', fontWeight: 700, lineHeight: 1.5 }}>
-                    <div>
-                      <strong style={{ color: '#ffffff' }}>1. Start Position:</strong> Touch fingertips of flat dominant hand to your lips or chin.
-                    </div>
-                    <div>
-                      <strong style={{ color: '#ffffff' }}>2. Forward Motion:</strong> Move hand gently downward and outward toward the listener.
-                    </div>
-                    <div>
-                      <strong style={{ color: '#ffffff' }}>3. Facial Cue:</strong> Maintain an appreciative smile and direct eye contact.
-                    </div>
+                    {(() => {
+                      const steps = howToFor(dictShown ? dictShown.id : searchQuery.trim().toUpperCase() || 'THANK YOU')
+                      return (
+                        <>
+                          <div>
+                            <strong style={{ color: '#ffffff' }}>1. Start Position:</strong> {steps.start}
+                          </div>
+                          <div>
+                            <strong style={{ color: '#ffffff' }}>2. {/^[A-Z0-9]$/.test(dictShown?.id ?? '') ? 'Hold Still:' : 'Motion:'}</strong> {steps.motion}
+                          </div>
+                          <div>
+                            <strong style={{ color: '#ffffff' }}>3. {dictShown && /^[A-Z0-9]$/.test(dictShown.id) ? 'Form Cue:' : 'Facial Cue:'}</strong> {steps.cue}
+                          </div>
+                        </>
+                      )
+                    })()}
                   </div>
                 </div>
 
-                {/* Related Signs */}
+                {/* Related Signs: same family, tap to look up */}
                 <div>
                   <div style={{ fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', color: '#afbac0', marginBottom: '8px' }}>
                     Related Signs
                   </div>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {['Please', "You're Welcome", 'Hello', 'Sorry'].map((tag) => (
-                      <span
+                    {relatedFor(dictShown ? dictShown.id : 'THANK YOU', lang, templatesForLang(lang)).map((tag) => (
+                      <button
                         key={tag}
-                        style={{
-                          background: '#131f24',
-                          border: '2px solid var(--duo-border)',
-                          padding: '6px 12px',
-                          borderRadius: '10px',
-                          fontSize: '12px',
-                          fontWeight: 800,
-                          color: '#ffffff',
+                        className="duo-btn duo-btn-secondary"
+                        style={{ padding: '6px 12px', fontSize: '12px' }}
+                        onClick={() => {
+                          setDictLock(null)
+                          setSearchQuery(tag)
                         }}
                       >
                         {tag}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -2077,9 +2144,16 @@ export default function App() {
                 <button
                   className="duo-btn duo-btn-green"
                   style={{ width: '100%' }}
-                  onClick={() => navigateTo('learn_mirror_prompt')}
+                  onClick={() => {
+                    const id = dictShown ? dictShown.id : searchQuery.trim().toUpperCase()
+                    if (!id) return
+                    const list = addToPracticeList(id)
+                    setPracticeCount(list.length)
+                    setAddedFlash(id)
+                    window.setTimeout(() => setAddedFlash(null), 2000)
+                  }}
                 >
-                  Add 'Thank You' to Practice List
+                  {addedFlash ? `Added '${addedFlash}' ✓` : `Add '${dictShown ? dictShown.id : searchQuery.trim().toUpperCase() || 'sign'}' to Practice List`}
                   <ArrowRight size={18} />
                 </button>
               </div>
@@ -2342,6 +2416,9 @@ export default function App() {
               </div>
               <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
                 Pulled from github.com/JmDemisana/SignLens releases. Only this check uses the network.
+              </div>
+              <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
+                3D hand model “Rigged Hand” by J-Toastie, CC-BY. MediaPipe hand and pose models by Google.
               </div>
             </div>
           </div>
