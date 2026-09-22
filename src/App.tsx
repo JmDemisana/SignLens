@@ -31,7 +31,7 @@ import { FSL_DEFINITIONS } from './engine/fsl'
 import { getProgress, recordAttempt, masteryFor, totalXP, touchToday } from './engine/progress'
 import { getPersonalAngles, savePersonalAngles, clearPersonalAngles, isCalibrated } from './engine/personal'
 import type { SignLang } from './engine/types'
-import HandModel from './components/HandModel'
+import HandClip from './components/HandClip'
 import LiveCoachPanel from './components/LiveCoachPanel'
 import { definitionFor, speak, howToFor, relatedFor } from './engine/dictionary'
 import { getPracticeList, addToPracticeList, practiceListItems } from './engine/practice'
@@ -1217,10 +1217,10 @@ export default function App() {
                   <span style={{ fontSize: '11px', fontWeight: 800, color: '#1cb0f6', textTransform: 'uppercase' }}>
                     3D Reference • drag to rotate
                   </span>
-                  <HandModel
+                  <HandClip
+                    signId={learnTarget}
                     pose={referencePose(learnTarget)}
                     path={findTemplate(learnTarget)?.path}
-                    animate={!!findTemplate(learnTarget)?.path}
                     flip={hand === 'Left'}
                     height={210}
                   />
@@ -1702,7 +1702,7 @@ export default function App() {
                 >
                   <div style={{ fontSize: '64px', fontWeight: 900, color: '#ffffff', textAlign: 'center', lineHeight: 1 }}>{currentLetter.char}</div>
                   {/* Rotatable 3D reference demo for the selected letter */}
-                  <HandModel pose={referencePose(currentLetter.char)} flip={hand === 'Left'} height={220} />
+                  <HandClip signId={currentLetter.char} pose={referencePose(currentLetter.char)} flip={hand === 'Left'} height={220} />
                 </div>
 
                 <div>
@@ -2049,14 +2049,14 @@ export default function App() {
                       <div style={{ marginTop: '10px', background: '#131f24', border: '2px solid var(--duo-border)', borderRadius: '14px', padding: '12px 16px' }}>
                         <div style={{ fontSize: '12px', fontWeight: 800, color: '#1cb0f6' }}>TEXT MATCH: {match.id}</div>
                         <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>{match.hint}</div>
-                        <HandModel pose={referencePose(match.id)} path={match.path} flip={hand === 'Left'} height={200} />
+                        <HandClip signId={match.id} pose={referencePose(match.id)} path={match.path} flip={hand === 'Left'} height={200} />
                       </div>
                     )
                   })()}
                   {/* 3D demo of the selected sign */}
                   {dictShown && findTemplate(dictShown.id) && (
                     <div style={{ marginTop: '10px' }}>
-                      <HandModel pose={referencePose(dictShown.id)} path={findTemplate(dictShown.id)!.path} flip={hand === 'Left'} height={220} />
+                      <HandClip signId={dictShown.id} pose={referencePose(dictShown.id)} path={findTemplate(dictShown.id)!.path} flip={hand === 'Left'} height={220} />
                     </div>
                   )}
                 </div>
