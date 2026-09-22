@@ -8,17 +8,21 @@ export interface DictResult {
   hint: string
 }
 
-export function lookupStatic(lm: HandLandmarks | null, lang: SignLang = 'ASL'): DictResult | null {
-  if (!lm || lm.length < 21) return null
+export function lookupTop3(lm: HandLandmarks | null, lang: SignLang = 'ASL'): DictResult[] {
+  if (!lm || lm.length < 21) return []
   const live = fingerAngles(lm)
-  let best: DictResult | null = null
-  for (const t of STATIC_TEMPLATES) {
-    if (!t.angles) continue
-    if (t.lang !== 'BOTH' && t.lang !== lang) continue
-    const { score } = scoreStatic(live, t.angles)
-    if (!best || score > best.score) best = { id: t.id, score, hint: t.hint }
-  }
-  return best
+  return STATIC_TEMPLATES.filter((t) => t.angles && (t.lang === 'BOTH' || t.lang === lang))
+    .map((t) => {
+      const { score } = scoreStatic(live, t.angles!)
+      return { id: t.id, score, hint: t.hint }
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+}
+
+export function lookupStatic(lm: HandLandmarks | null, lang: SignLang = 'ASL'): DictResult | null {
+  const top = lookupTop3(lm, lang)
+  return top[0] ?? null
 }
 
 export const DEFINITIONS: Record<string, { title: string; sub: string; desc: string }> = {

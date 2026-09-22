@@ -32,7 +32,7 @@ import type { SignLang } from './engine/types'
 import Hand3D from './components/Hand3D'
 import { definitionFor, speak } from './engine/dictionary'
 import { referencePose } from './engine/referenceHands'
-import type { ScoreDetail, Vec3 } from './engine/types'
+import type { ScoreDetail, Vec3, HandLandmarks } from './engine/types'
 
 // Reusable live webcam stream renderer
 function WebcamVideo({
@@ -119,13 +119,21 @@ export default function App() {
       return true
     }
   })
-  const [showGhost, setShowGhost] = useState(() => {
+  // Hand dominance: left and right hands trace mirror paths. Motion scoring
+  // always tries both orientations, this flips the 3D demo to match the learner.
+  const [hand, setHand] = useState<'Auto' | 'Right' | 'Left'>(() => {
     try {
-      return localStorage.getItem('signlens_ghost') !== '0'
+      return (localStorage.getItem('signlens_hand') as 'Auto' | 'Right' | 'Left') || 'Auto'
     } catch {
-      return true
+      return 'Auto'
     }
   })
+  const setHandPersist = (h: 'Auto' | 'Right' | 'Left') => {
+    setHand(h)
+    try {
+      localStorage.setItem('signlens_hand', h)
+    } catch { /* ignore */ }
+  }
   const [soundOn, setSoundOn] = useState(() => {
     try {
       return localStorage.getItem('signlens_sound') !== '0'
@@ -219,6 +227,11 @@ export default function App() {
   const dictVideoRef = useRef<HTMLVideoElement | null>(null)
   const dict = useSignCheck(dictVideoRef, { targetId: '__scan__', active: false })
   const [dictBest, setDictBest] = useState<{ id: string; score: number; hint: string } | null>(null)
+  const [dictCands, setDictCands] = useState<{ id: string; score: number; hint: string }[]>([])
+  const [dictLm, setDictLm] = useState<HandLandmarks | null>(null)
+  const [dictLock, setDictLock] = useState<string | null>(null)
+  // Locked candidate wins for the translation panel, live best keeps scanning.
+  const dictShown = dictLock ? (dictCands.find((c) => c.id === dictLock) ?? dictBest) : dictBest
   const dictPathRef = useRef<Vec3[]>([])
   const langRef = useRef(lang)
   langRef.current = lang
@@ -231,16 +244,18 @@ export default function App() {
     let timer = 0
     const tick = async () => {
       if (!alive) return
-      const { lookupStatic } = await import('./engine/dictionary')
+      const { lookupStatic, lookupTop3 } = await import('./engine/dictionary')
       const { detectLandmarks } = await import('./engine/mediapipe')
       const { normalizePoint } = await import('./engine/bodyAnchor')
       const { palmCenter } = await import('./engine/angles')
-      const { scoreDynamic } = await import('./engine/dtw')
+      const { scoreDynamicBoth } = await import('./engine/dtw')
       const { templatesForLang } = await import('./engine/templates')
       const v = dictVideoRef.current
       if (v && v.readyState >= 2 && v.videoWidth > 0) {
         const lm = detectLandmarks(v, performance.now())
+        setDictLm(lm)
         const staticBest = lookupStatic(lm, langRef.current)
+        setDictCands(lookupTop3(lm, langRef.current))
         let best = staticBest && staticBest.score > 55 ? staticBest : null
         // Motion buffer for dynamic words.
         if (lm) {
@@ -252,7 +267,7 @@ export default function App() {
           if (buf.length >= 24) {
             for (const t of templatesForLang(langRef.current)) {
               if (t.kind !== 'dynamic' || !t.path) continue
-              const s = scoreDynamic(buf, t.path)
+              const s = scoreDynamicBoth(buf, t.path)
               if (s >= 70 && (!best || s > best.score)) best = { id: t.id, score: s, hint: t.hint }
             }
           }
@@ -1075,8 +1090,6 @@ export default function App() {
                 <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} videoRef={mirrorVideoRef} />
                 {showSkeleton && live.landmarks ? (
                   <LandmarkOverlay lm={live.landmarks} color={live.detail && live.detail.passed ? '#58cc02' : '#1cb0f6'} mirrored={isMirrored} />
-                ) : showGhost ? (
-                  renderHandLandmarks('prompt', isCameraLive, learnTarget)
                 ) : null}
                 <div
                   className="duo-camera-badge"
@@ -1145,10 +1158,18 @@ export default function App() {
 
                 <div className="duo-sign-glyph-box">
                   <span style={{ fontSize: '11px', fontWeight: 800, color: '#1cb0f6', textTransform: 'uppercase' }}>
-                    Reference Posture
+                    3D Reference • drag to rotate
                   </span>
-                  <div style={{ fontSize: '38px', marginTop: '6px' }}>🤏</div>
-                  <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>ASL Standard</span>
+                  <Hand3D
+                    pose={referencePose(learnTarget)}
+                    path={findTemplate(learnTarget)?.path}
+                    animate={!!findTemplate(learnTarget)?.path}
+                    flip={hand === 'Left'}
+                    height={210}
+                  />
+                  <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
+                    {findTemplate(learnTarget)?.kind === 'dynamic' ? 'Watch the motion, then copy it' : 'ASL Standard'}
+                  </span>
                 </div>
 
                 <div
@@ -1617,7 +1638,7 @@ export default function App() {
                 >
                   <div style={{ fontSize: '64px', fontWeight: 900, color: '#ffffff', textAlign: 'center', lineHeight: 1 }}>{currentLetter.char}</div>
                   {/* Rotatable 3D reference demo for the selected letter */}
-                  <Hand3D pose={referencePose(currentLetter.char)} height={220} />
+                  <Hand3D pose={referencePose(currentLetter.char)} flip={hand === 'Left'} height={220} />
                 </div>
 
                 <div>
@@ -1684,8 +1705,6 @@ export default function App() {
                 <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} videoRef={alphaVideoRef} />
                 {showSkeleton && alpha.landmarks ? (
                   <LandmarkOverlay lm={alpha.landmarks} color={alpha.detail && alpha.detail.passed ? '#58cc02' : '#1cb0f6'} mirrored={isMirrored} />
-                ) : showGhost ? (
-                  renderHandLandmarks('correct', isCameraLive, selectedLetter)
                 ) : null}
                 <div
                   className="duo-camera-badge"
@@ -1799,7 +1818,9 @@ export default function App() {
 
                 <div className="duo-camera-card" style={{ aspectRatio: '16/10' }}>
                   <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} videoRef={dictVideoRef} />
-                  {showGhost && renderHandLandmarks('prompt', isCameraLive, dictBest ? dictBest.id : 'SIGN')}
+                  {showSkeleton && dictLm && (
+                    <LandmarkOverlay lm={dictLm} color={dictBest && dictBest.score >= 80 ? '#58cc02' : '#1cb0f6'} mirrored={isMirrored} />
+                  )}
 
                   <div
                     className="duo-camera-badge"
@@ -1849,9 +1870,25 @@ export default function App() {
                       fontSize: '14px',
                     }}
                   >
-                    {dictBest ? `${Math.round(dictBest.score)}%` : 'Scanning'}
+                    {dictBest ? `${Math.round(dictBest.score)}%` : dictLm ? 'Low confidence…' : 'Scanning'}
                   </div>
                 </div>
+
+                {/* Top candidates: tap to lock the translation */}
+                {dictCands.length > 0 && (
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {dictCands.map((c) => (
+                      <button
+                        key={c.id}
+                        className={`duo-btn ${dictLock === c.id ? 'duo-btn-green' : 'duo-btn-secondary'}`}
+                        style={{ padding: '8px 14px', fontSize: '13px' }}
+                        onClick={() => setDictLock(dictLock === c.id ? null : c.id)}
+                      >
+                        {c.id} • {Math.round(c.score)}%
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Right: Dictionary Entry & TTS Audio */}
@@ -1871,14 +1908,15 @@ export default function App() {
                     Sign Translation ({lang})
                   </div>
                   <h3 style={{ fontSize: '32px', fontWeight: 900, color: '#ffffff' }}>
-                    {dictBest ? (FSL_DEFINITIONS[dictBest.id]?.title ?? definitionFor(dictBest.id).title) : searchQuery || 'Thank You'}
+                    {dictShown ? (FSL_DEFINITIONS[dictShown.id]?.title ?? definitionFor(dictShown.id).title) : searchQuery || 'Thank You'}
                   </h3>
                   <div style={{ fontSize: '13px', color: '#1cb0f6', fontWeight: 800 }}>
-                    {dictBest ? (FSL_DEFINITIONS[dictBest.id]?.sub ?? definitionFor(dictBest.id).sub) : '/θæŋk juː/ • Conversational Courtesy'}
+                    {dictShown ? (FSL_DEFINITIONS[dictShown.id]?.sub ?? definitionFor(dictShown.id).sub) : '/θæŋk juː/ • Conversational Courtesy'}
                   </div>
-                  {dictBest && (
+                  {dictShown && (
                     <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700, marginTop: '6px' }}>
-                      {FSL_DEFINITIONS[dictBest.id]?.desc ?? definitionFor(dictBest.id).desc}
+                      {FSL_DEFINITIONS[dictShown.id]?.desc ?? definitionFor(dictShown.id).desc}
+                      {dictLock && <div style={{ color: '#58cc02', fontWeight: 800 }}>Locked by you. Tap the chip again to resume live scan.</div>}
                     </div>
                   )}
                   {/* Reverse text lookup against the active language pack */}
@@ -1890,14 +1928,14 @@ export default function App() {
                       <div style={{ marginTop: '10px', background: '#131f24', border: '2px solid var(--duo-border)', borderRadius: '14px', padding: '12px 16px' }}>
                         <div style={{ fontSize: '12px', fontWeight: 800, color: '#1cb0f6' }}>TEXT MATCH: {match.id}</div>
                         <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>{match.hint}</div>
-                        <Hand3D pose={referencePose(match.id)} path={match.path} height={200} />
+                        <Hand3D pose={referencePose(match.id)} path={match.path} flip={hand === 'Left'} height={200} />
                       </div>
                     )
                   })()}
-                  {/* 3D demo of the live-detected sign */}
-                  {dictBest && findTemplate(dictBest.id) && (
+                  {/* 3D demo of the selected sign */}
+                  {dictShown && findTemplate(dictShown.id) && (
                     <div style={{ marginTop: '10px' }}>
-                      <Hand3D pose={referencePose(dictBest.id)} path={findTemplate(dictBest.id)!.path} height={220} />
+                      <Hand3D pose={referencePose(dictShown.id)} path={findTemplate(dictShown.id)!.path} flip={hand === 'Left'} height={220} />
                     </div>
                   )}
                 </div>
@@ -1918,7 +1956,7 @@ export default function App() {
                     <button
                       className="duo-btn duo-btn-blue"
                       style={{ width: '42px', height: '42px', padding: 0, borderRadius: '50%' }}
-                      onClick={() => soundOn && speak(dictBest ? (FSL_DEFINITIONS[dictBest.id]?.title ?? definitionFor(dictBest.id).title) : searchQuery || 'Thank you', ttsRate)}
+                      onClick={() => soundOn && speak(dictShown ? (FSL_DEFINITIONS[dictShown.id]?.title ?? definitionFor(dictShown.id).title) : searchQuery || 'Thank you', ttsRate)}
                     >
                       <Volume2 size={20} />
                     </button>
@@ -2088,14 +2126,20 @@ export default function App() {
 
               <div className="duo-settings-row">
                 <div>
-                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>Target Ghost Guide</div>
-                  <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>Show target hand outline overlay during practice</div>
+                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>Hand Dominance</div>
+                  <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>Flips the 3D demo. Scoring accepts both hands</div>
                 </div>
-                <div
-                  onClick={() => togglePref('signlens_ghost', setShowGhost, showGhost)}
-                  style={{ width: '48px', height: '28px', background: showGhost ? '#58cc02' : '#37464f', borderRadius: '999px', position: 'relative', cursor: 'pointer' }}
-                >
-                  <div style={{ width: '22px', height: '22px', background: '#ffffff', borderRadius: '50%', position: 'absolute', top: '3px', left: showGhost ? '23px' : '3px', transition: 'left 0.2s ease' }}></div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {(['Auto', 'Right', 'Left'] as const).map((h) => (
+                    <button
+                      key={h}
+                      className={`duo-btn ${hand === h ? 'duo-btn-blue' : 'duo-btn-secondary'}`}
+                      style={{ padding: '6px 12px', fontSize: '12px' }}
+                      onClick={() => setHandPersist(h)}
+                    >
+                      {h}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>

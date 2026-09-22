@@ -34,3 +34,17 @@ export function scoreDynamic(live: Vec3[], target: Vec3[]): number {
   // d is normalized mean distance. 0 = perfect, 0.25+ = poor.
   return Math.max(0, Math.min(100, 100 - (d / 0.25) * 100))
 }
+
+// Left and right hands trace mirror-image paths. Mirror the live path
+// around its own centroid so both hands score fairly, camera or body frame.
+export function mirrorPath(path: Vec3[]): Vec3[] {
+  if (!path.length) return path
+  const mean = path.reduce((a, p) => a + p.x, 0) / path.length
+  return path.map((p) => ({ x: 2 * mean - p.x, y: p.y, z: p.z || 0 }))
+}
+
+// Orientation-invariant score: best of raw and mirrored. Static angle
+// checks are already mirror-invariant, so only motion needs this.
+export function scoreDynamicBoth(live: Vec3[], target: Vec3[]): number {
+  return Math.max(scoreDynamic(live, target), scoreDynamic(mirrorPath(live), target))
+}

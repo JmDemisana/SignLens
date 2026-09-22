@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { detectLandmarks, loadHandLandmarker } from '../engine/mediapipe'
 import { fingerAngles, palmCenter } from '../engine/angles'
 import { scoreStatic } from '../engine/angles'
-import { scoreDynamic } from '../engine/dtw'
+import { scoreDynamicBoth } from '../engine/dtw'
 import { findTemplate } from '../engine/templates'
 import { normalizePoint } from '../engine/bodyAnchor'
 import type { HandLandmarks, ScoreDetail, Vec3 } from '../engine/types'
@@ -57,8 +57,9 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
         }
         if (pathRef.current.length > 60) pathRef.current.shift()
         // Need a full gesture window before scoring, not a 0.2s blip.
+        // Both hand orientations are tried so left and right signers pass.
         if (pathRef.current.length >= 24) {
-          const score = scoreDynamic(pathRef.current, tpl.path)
+          const score = scoreDynamicBoth(pathRef.current, tpl.path)
           setDetail({ id: targetId, score, perJoint: [], passed: score >= 70 })
         }
       }
