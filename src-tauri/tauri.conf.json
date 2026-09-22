@@ -35,7 +35,7 @@
       "active": true,
       "endpoints": ["https://github.com/JmDemisana/SignLens/releases/latest/download/latest.json"],
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcyNEU1NzlCNTI3OUMxN0EKUldSNndYbFNtMWRPY3ZMd3p5S1lsT1JxeEx4UXJ0UnZvYVIxd2hCbUdCY1ROU1pMTVBiV3dsa3kK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlEMUU3MEEyQTBDQjBDRDgKUldUWURNdWdvbkFlblNVZlgwME1iWklDUzZqQW1HMTg1dlE5WmdkRTJBdnJrQVErdG1TbVBnRlEK"
     }
   }
 }
