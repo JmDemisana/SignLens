@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import type { HandLandmarks, Vec3 } from '../engine/types'
 import { indexRig, poseRig, type Rig } from '../engine/retarget'
+import { loadHandGLB, frameModel, snapshotHand } from '../engine/handGLB'
 
-// Real sculpted hand ("Rigged Hand" by J-Toastie, CC-BY), posed by our
-// landmarks. Offline: model + loader ship inside the app bundle.
+// Prerendered snapshot first, live 3D only when the learner grabs it.
+// Kills the multi-engine lag: zero WebGL contexts until touched.
 export default function HandModel({
   pose,
   path,
@@ -21,23 +22,42 @@ export default function HandModel({
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const rigRef = useRef<Rig | null>(null)
-  const [status, setStatus] = useState('loading')
-  const poseRef = useRef(pose)
-  poseRef.current = pose
-  const flipRef = useRef(flip)
-  flipRef.current = flip
+  const liveRef = useRef(false)
+  const [status, setStatus] = useState<'snap' | 'live' | 'error'>('snap')
+  const [img, setImg] = useState<string | null>(null)
+  const poseKey = JSON.stringify({
+    p: pose.map((v) => [Math.round(v.x * 500), Math.round(v.y * 500), Math.round((v.z || 0) * 500)]),
+    flip,
+  })
 
-  // Scene mounts once.
+  // Snapshot any time the demonstrated sign changes.
   useEffect(() => {
+    let alive = true
+    const w = mountRef.current?.clientWidth || 300
+    snapshotHand(pose, flip, w, Math.round(height))
+      .then((url) => alive && setImg(url))
+      .catch(() => alive && setStatus('error'))
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poseKey, height])
+
+  // Spin up the live scene on first grab.
+  const goLive = () => {
+    if (liveRef.current || status === 'error') return
     const mount = mountRef.current
     if (!mount) return
+    liveRef.current = true
     let alive = true
     const w = mount.clientWidth || 300
     const h = height
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setSize(w, h)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+    renderer.domElement.style.width = '100%'
+    renderer.domElement.style.height = `${h}px`
     mount.appendChild(renderer.domElement)
 
     const scene = new THREE.Scene()
@@ -58,30 +78,26 @@ export default function HandModel({
     const holder = new THREE.Group()
     root.add(holder)
 
-    new GLTFLoader().load(
-      '/models/hand-rigged.glb',
-      (gltf) => {
-        if (!alive) return
-        const model = gltf.scene
-        // Normalize: fit hand to ~2 units tall, centered.
-        const box = new THREE.Box3().setFromObject(model)
-        const size = box.getSize(new THREE.Vector3())
-        const center = box.getCenter(new THREE.Vector3())
-        const s = 2.0 / Math.max(size.y, 0.001)
-        model.scale.setScalar(s)
-        model.position.sub(center.clone().multiplyScalar(s))
-        holder.add(model)
-        rigRef.current = indexRig(model)
-        try {
-          poseRig(rigRef.current, poseRef.current, flipRef.current)
-        } catch (e) {
-          console.warn('pose failed', e)
-        }
-        setStatus('ready')
-      },
-      undefined,
-      () => alive && setStatus('error'),
-    )
+    loadHandGLB().then((src) => {
+      if (!alive) return
+      const model = skeletonClone(src)
+      frameModel(model)
+      holder.add(model)
+      rigRef.current = indexRig(model)
+      try {
+        poseRig(rigRef.current, poseRef.current, flipRef.current)
+      } catch (e) {
+        console.warn('pose failed', e)
+      }
+      setStatus('live')
+    })
+
+    if (path && path.length >= 2) {
+      const g = new THREE.BufferGeometry().setFromPoints(
+        path.map((p) => new THREE.Vector3((p.x - 0.5) * 2.2, (0.5 - p.y) * 2.2, 0)),
+      )
+      holder.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x1cb0f6 })))
+    }
 
     let rotX = 0.12
     let rotY = 0
@@ -113,11 +129,35 @@ export default function HandModel({
     mount.addEventListener('pointercancel', end)
 
     let raf = 0
+    const start = performance.now()
     const loop = () => {
       if (!alive) return
+      // Dead when the tab hides or the demo scrolls away.
+      if (document.hidden) {
+        raf = requestAnimationFrame(loop)
+        return
+      }
+      const r = mount.getBoundingClientRect()
+      if (r.bottom < 0 || r.top > window.innerHeight) {
+        raf = requestAnimationFrame(loop)
+        return
+      }
       raf = requestAnimationFrame(loop)
       if (!dragging && Date.now() - lastMove > 5000) rotY += 0.002
       root.rotation.set(rotX, rotY, 0)
+      if (animate && path && path.length >= 2) {
+        const t = ((performance.now() - start) / 2600) % 2
+        const tri = t < 1 ? t : 2 - t
+        const fi = tri * (path.length - 1)
+        const i0 = Math.floor(fi)
+        const i1 = Math.min(path.length - 1, i0 + 1)
+        const fr = fi - i0
+        holder.position.set(
+          (path[i0].x + (path[i1].x - path[i0].x) * fr - path[0].x) * 2.2,
+          -((path[i0].y + (path[i1].y - path[i0].y) * fr - path[0].y) * 2.2),
+          0,
+        )
+      }
       renderer.render(scene, camera)
     }
     loop()
@@ -139,18 +179,18 @@ export default function HandModel({
       mount.removeEventListener('pointercancel', end)
       rigRef.current = null
       renderer.dispose()
-      mount.removeChild(renderer.domElement)
+      if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
     }
-  }, [height])
+  }
 
-  // Repose + trail whenever the demonstrated sign changes.
-  const trailKey = JSON.stringify((path ?? []).map((v) => [Math.round(v.x * 500), Math.round(v.y * 500)]))
-  const poseKey = JSON.stringify({
-    p: pose.map((v) => [Math.round(v.x * 500), Math.round(v.y * 500), Math.round((v.z || 0) * 500)]),
-    flip,
-  })
+  const poseRef = useRef(pose)
+  poseRef.current = pose
+  const flipRef = useRef(flip)
+  flipRef.current = flip
+
+  // Repose the live scene when the sign changes mid-view.
   useEffect(() => {
-    if (rigRef.current) {
+    if (rigRef.current && liveRef.current) {
       try {
         poseRig(rigRef.current, pose, flip)
       } catch (e) {
@@ -160,40 +200,24 @@ export default function HandModel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poseKey])
 
-  // Gesture playback offset for dynamic words.
-  const [phase, setPhase] = useState(0)
-  useEffect(() => {
-    if (!animate || !path || path.length < 2) return
-    let raf = 0
-    const start = performance.now()
-    const tick = () => {
-      raf = requestAnimationFrame(tick)
-      const t = ((performance.now() - start) / 2600) % 2
-      setPhase(t < 1 ? t : 2 - t)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [animate, path, trailKey])
-
-  const off =
-    animate && path && path.length >= 2
-      ? (() => {
-          const fi = phase * (path.length - 1)
-          const i0 = Math.floor(fi)
-          const i1 = Math.min(path.length - 1, i0 + 1)
-          const fr = fi - i0
-          return {
-            x: (path[i0].x + (path[i1].x - path[i0].x) * fr - path[0].x) * 2.2,
-            y: -((path[i0].y + (path[i1].y - path[i0].y) * fr - path[0].y) * 2.2),
-          }
-        })()
-      : { x: 0, y: 0 }
-
   return (
     <div>
-      <div ref={mountRef} style={{ width: '100%', height, cursor: 'grab', touchAction: 'none', transform: `translate(${off.x * 40}px, ${off.y * 40}px)` }} />
+      <div
+        ref={mountRef}
+        style={{ width: '100%', height, cursor: 'grab', touchAction: 'none', position: 'relative', overflow: 'hidden' }}
+        onPointerDown={goLive}
+      >
+        {status !== 'live' && img && (
+          <img src={img} alt="3D hand reference" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} draggable={false} />
+        )}
+        {status !== 'live' && !img && (
+          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
+            {status === 'error' ? '3D preview unavailable' : 'Rendering hand...'}
+          </div>
+        )}
+      </div>
       <div style={{ fontSize: '11px', color: '#afbac0', fontWeight: 700, textAlign: 'center', marginTop: '4px' }}>
-        {status === 'ready' ? '3D hand • drag to rotate' : status === 'error' ? '3D model failed to load' : 'Loading 3D hand...'}
+        {status === 'live' ? '3D hand • drag to rotate' : 'Tap the hand for live 3D'}
       </div>
     </div>
   )
