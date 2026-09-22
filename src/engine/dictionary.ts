@@ -1,5 +1,6 @@
 import { fingerAngles, scoreStatic } from './angles'
 import { STATIC_TEMPLATES } from './templates'
+import { getPersonalAngles } from './personal'
 import type { HandLandmarks, SignLang } from './types'
 
 export interface DictResult {
@@ -13,7 +14,8 @@ export function lookupTop3(lm: HandLandmarks | null, lang: SignLang = 'ASL'): Di
   const live = fingerAngles(lm)
   return STATIC_TEMPLATES.filter((t) => t.angles && (t.lang === 'BOTH' || t.lang === lang))
     .map((t) => {
-      const { score } = scoreStatic(live, t.angles!)
+      const target = getPersonalAngles(t.id) ?? t.angles!
+      const { score } = scoreStatic(live, target)
       return { id: t.id, score, hint: t.hint }
     })
     .sort((a, b) => b.score - a.score)

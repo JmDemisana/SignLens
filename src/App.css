@@ -875,3 +875,134 @@ html, body {
   font-weight: 700;
   letter-spacing: 0.2px;
 }
+
+/* Split layouts shared by Alphabet and Dictionary screens */
+.alpha-split {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 24px;
+  align-items: start;
+}
+
+.dict-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 26px;
+  align-items: start;
+}
+
+/* ========================================================================= */
+/* ADAPTIVE LAYOUT: half-screen, narrow windows, short heights */
+/* ========================================================================= */
+@media (max-width: 1080px) {
+  .duo-header {
+    padding: 0 16px;
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 72px;
+    row-gap: 8px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .duo-main-content {
+    padding: 16px;
+    justify-content: flex-start;
+  }
+
+  .duo-path-layout,
+  .duo-quiz-body,
+  .alpha-split,
+  .dict-split {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  /* Camera keeps a workable mirror frame when stacked */
+  .duo-quiz-body .duo-camera-card,
+  .dict-split .duo-camera-card {
+    aspect-ratio: 4 / 3;
+    min-height: 300px;
+  }
+
+  .duo-nav-links {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .duo-nav-item {
+    padding: 8px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .duo-brand {
+    font-size: 20px;
+  }
+
+  .duo-stats {
+    gap: 8px;
+    font-size: 13px;
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .duo-quiz-body .duo-camera-card,
+  .dict-split .duo-camera-card {
+    min-height: 240px;
+  }
+
+  .duo-results-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  .duo-result-val {
+    font-size: 20px;
+  }
+
+  .duo-celebration-title {
+    font-size: 28px;
+  }
+
+  .duo-alphabet-grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 10px;
+  }
+
+  .duo-unit-banner {
+    flex-direction: column;
+    gap: 14px;
+    text-align: center;
+  }
+
+  .duo-bottom-bar {
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+
+/* Short windows: tighten vertical rhythm so drills fit without scrolling */
+@media (max-height: 780px) {
+  .duo-main-content {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .duo-quiz-body {
+    margin-bottom: 12px;
+    gap: 16px;
+  }
+
+  .duo-celebration-container {
+    gap: 16px;
+    padding: 8px 0;
+  }
+
+  .duo-celebration-title {
+    font-size: 30px;
+  }
+}

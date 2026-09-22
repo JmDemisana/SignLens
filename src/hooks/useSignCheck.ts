@@ -4,6 +4,7 @@ import { fingerAngles, palmCenter } from '../engine/angles'
 import { scoreStatic } from '../engine/angles'
 import { scoreDynamicBoth } from '../engine/dtw'
 import { findTemplate } from '../engine/templates'
+import { getPersonalAngles } from '../engine/personal'
 import { normalizePoint } from '../engine/bodyAnchor'
 import type { HandLandmarks, ScoreDetail, Vec3 } from '../engine/types'
 
@@ -17,7 +18,9 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
   const [detail, setDetail] = useState<ScoreDetail | null>(null)
   const [fps, setFps] = useState(0)
   const [ready, setReady] = useState(false)
+  const [angles, setAngles] = useState<number[]>([])
   const pathRef = useRef<Vec3[]>([])
+  const smoothRef = useRef<number[]>([])
   const framesRef = useRef(0)
   const lastRef = useRef(0)
 
@@ -42,8 +45,19 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
       const tpl = findTemplate(targetId)
       if (!tpl || !lm) return
       if (tpl.kind === 'static' && tpl.angles) {
-        const live = fingerAngles(lm)
-        const { score, perJoint } = scoreStatic(live, tpl.angles)
+        // Exponential moving average over frames: one shaky frame of
+        // "fingers apart" no longer tanks the score when they touch.
+        const raw = fingerAngles(lm)
+        const prev = smoothRef.current
+        const live =
+          prev.length === raw.length
+            ? raw.map((v, i) => prev[i] + 0.35 * (v - prev[i]))
+            : raw
+        smoothRef.current = live
+        setAngles(live)
+        // Personal calibration wins over the built-in guess when present.
+        const target = getPersonalAngles(targetId) ?? tpl.angles
+        const { score, perJoint } = scoreStatic(live, target)
         setDetail({ id: targetId, score, perJoint, passed: score >= 80 })
         pathRef.current = []
       } else if (tpl.kind === 'dynamic' && tpl.path) {
@@ -71,5 +85,5 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
     }
   }, [active, targetId, videoRef])
 
-  return { landmarks, detail, fps, ready }
+  return { landmarks, detail, fps, ready, angles }
 }

@@ -29,6 +29,7 @@ import { answerCorrect, answerIncorrect, createLesson, currentItem, isFinished, 
 import { findTemplate, templatesForLang } from './engine/templates'
 import { FSL_DEFINITIONS } from './engine/fsl'
 import { getProgress, recordAttempt, masteryFor, totalXP, touchToday } from './engine/progress'
+import { getPersonalAngles, savePersonalAngles, clearPersonalAngles, isCalibrated } from './engine/personal'
 import type { SignLang } from './engine/types'
 import Hand3D from './components/Hand3D'
 import LiveCoachPanel from './components/LiveCoachPanel'
@@ -1583,7 +1584,7 @@ export default function App() {
             </div>
 
             {/* Split layout: 26 cards + Inspector */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '24px' }}>
+            <div className="alpha-split">
               <div className="duo-alphabet-grid">
                 {filteredAlphabet.map((item) => (
                   <div
@@ -1632,8 +1633,13 @@ export default function App() {
                       fontWeight: 800,
                     }}
                   >
-                    {currentLetter.pct}% Mastery
+                    {currentLetter.pct}% Mastery{isCalibrated(currentLetter.char) ? ' • Personal' : ''}
                   </span>
+                  {getPersonalAngles(currentLetter.char) && (
+                    <span style={{ fontSize: '11px', color: '#58cc02', fontWeight: 800 }}>
+                      Scoring against your saved hand
+                    </span>
+                  )}
                 </div>
 
                 <div
@@ -1779,6 +1785,37 @@ export default function App() {
                 >
                   Clear & Return to Grid
                 </button>
+
+                {/* Personal calibration: save YOUR steady hand as the reference */}
+                {isCalibrated(selectedLetter) ? (
+                  <button
+                    className="duo-btn duo-btn-secondary"
+                    style={{ width: '100%' }}
+                    onClick={() => {
+                      clearPersonalAngles(selectedLetter)
+                      setProgressRec(getProgress())
+                    }}
+                  >
+                    My shape saved ✓ • Reset to default
+                  </button>
+                ) : (
+                  <button
+                    className="duo-btn duo-btn-blue"
+                    style={{ width: '100%' }}
+                    disabled={!alpha.detail?.passed || alpha.angles.length === 0}
+                    onClick={() => {
+                      savePersonalAngles(selectedLetter, alpha.angles)
+                      setProgressRec(getProgress())
+                    }}
+                  >
+                    Save MY {selectedLetter} as reference
+                  </button>
+                )}
+                <div style={{ fontSize: '11px', color: '#afbac0', fontWeight: 700, textAlign: 'center' }}>
+                  {isCalibrated(selectedLetter)
+                    ? 'Scoring against your captured hand.'
+                    : 'Hold 80%+ then save. Detection adapts to your hand.'}
+                </div>
               </div>
             </div>
           </div>
@@ -1805,7 +1842,7 @@ export default function App() {
             </div>
 
             {/* Split Screen: Camera Detector Feed vs Lexicon Definition */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '26px' }}>
+            <div className="dict-split">
               {/* Left: Camera Optical Recognition HUD */}
               <div
                 style={{

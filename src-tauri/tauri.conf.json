@@ -16,6 +16,8 @@
         "title": "SignLens",
         "width": 1200,
         "height": 800,
+        "minWidth": 380,
+        "minHeight": 560,
         "resizable": true,
         "fullscreen": false
       }

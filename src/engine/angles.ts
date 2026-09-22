@@ -49,10 +49,13 @@ export function palmCenter(lm: HandLandmarks): Vec3 {
   return s
 }
 
-export function scoreStatic(live: number[], target: number[], tolerance = 18): { score: number; perJoint: number[] } {
-  const perJoint = live.map((v, i) => Math.abs(v - (target[i] ?? v)))
+export function scoreStatic(live: number[], target: number[], tolerance = 26): { score: number; perJoint: number[] } {
+  // 6-degree deadzone: MediaPipe jitters a few degrees frame to frame, and
+  // fingers that look touching still read a small gap. Below this floor
+  // everything counts as perfect so the matcher stops punishing noise.
+  const perJoint = live.map((v, i) => Math.max(0, Math.abs(v - (target[i] ?? v)) - 6))
   const avg = perJoint.reduce((a, b) => a + b, 0) / Math.max(1, perJoint.length)
-  // Linear falloff: 0 offset = 100, tolerance = 80, 3x tolerance = 0
+  // Linear falloff: 0 offset = 100, tolerance = ~67, 3x tolerance = 0
   const score = Math.max(0, Math.min(100, 100 - (avg / (tolerance * 3)) * 100))
   return { score, perJoint }
 }

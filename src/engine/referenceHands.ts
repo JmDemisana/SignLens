@@ -82,11 +82,12 @@ export function referencePose(id: string): HandLandmarks {
   const sM: [number, number] = [400, 168]
   const sR: [number, number] = [432 + sp * 1.5, 178]
   const sP: [number, number] = [462 + sp * 1.5, 198]
-  // Bent tips (fist): staggered across the palm so digits stay readable.
-  const fI: [number, number] = [384, 296]
-  const fM: [number, number] = [400, 290]
-  const fR: [number, number] = [416, 296]
-  const fP: [number, number] = [430, 304]
+  // Bent tips (fist): staggered across and in depth so digits read
+  // separately instead of merging into one ball.
+  const fI: [number, number] = [380, 296]
+  const fM: [number, number] = [400, 288]
+  const fR: [number, number] = [420, 296]
+  const fP: [number, number] = [436, 306]
 
   const idx = finger(bI[0], bI[1], sI[0], sI[1], fI[0], fI[1], c.index)
   const mid = finger(bM[0], bM[1], sM[0], sM[1], fM[0], fM[1], c.middle)

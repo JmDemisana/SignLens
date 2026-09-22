@@ -71,7 +71,13 @@ export default function Hand3D({
     root.add(hand)
 
     const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(skin), roughness: 0.62, metalness: 0.02 })
-    const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.35, metalness: 0.2, emissive: new THREE.Color(color), emissiveIntensity: 0.25 })
+    // One hue per digit so curled fingers read separately in a fist.
+    const fingerMats = [0xd98a5f, 0x58cc02, 0x1cb0f6, 0xce82ff, 0xffc800].map(
+      (c) => new THREE.MeshStandardMaterial({ color: new THREE.Color(skin).lerp(new THREE.Color(c), 0.45), roughness: 0.6, metalness: 0.02 }),
+    )
+    const tipMats = [0xd98a5f, 0x58cc02, 0x1cb0f6, 0xce82ff, 0xffc800].map(
+      (c) => new THREE.MeshStandardMaterial({ color: new THREE.Color(c), roughness: 0.35, metalness: 0.2, emissive: new THREE.Color(c), emissiveIntensity: 0.45 }),
+    )
 
     const fx = flip ? -1 : 1
     const toV = (p: Vec3) => new THREE.Vector3(fx * (p.x - 0.5) * 2.2, (0.5 - p.y) * 2.2, -((p.z || 0) * 3))
@@ -90,28 +96,30 @@ export default function Hand3D({
     hand.add(palm)
 
     // Fingers: smooth tapered look from two nested tubes.
+    // Thumb = chain 0, then index, middle, ring, pinky get their own hues.
+    const chainMat = [fingerMats[0], fingerMats[1], fingerMats[2], fingerMats[3], fingerMats[4]]
     for (let f = 0; f < CHAINS.length; f++) {
       const pts = CHAINS[f].map((i) => toV(pose[i]))
       const curve = new THREE.CatmullRomCurve3(pts)
-      const outer = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, TUBE_R[f], 12, false), skinMat)
+      const outer = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, TUBE_R[f], 12, false), chainMat[f])
       hand.add(outer)
-      const tipCap = new THREE.Mesh(new THREE.SphereGeometry(TUBE_R[f] * 0.98, 14, 12), skinMat)
+      const tipCap = new THREE.Mesh(new THREE.SphereGeometry(TUBE_R[f] * 0.98, 14, 12), chainMat[f])
       tipCap.position.copy(pts[pts.length - 1])
       hand.add(tipCap)
     }
     // Glowing fingertips so learners see exactly where tips land.
     const tipIdx = [4, 8, 12, 16, 20]
     const tipGeo = new THREE.SphereGeometry(0.032, 14, 12)
-    for (const i of tipIdx) {
-      const m = new THREE.Mesh(tipGeo, accentMat)
-      m.position.copy(toV(pose[i]))
+    for (let k = 0; k < tipIdx.length; k++) {
+      const m = new THREE.Mesh(tipGeo, tipMats[k])
+      m.position.copy(toV(pose[tipIdx[k]]))
       hand.add(m)
     }
 
     // Motion trail for dynamic words.
     if (path && path.length >= 2) {
       const g = new THREE.BufferGeometry().setFromPoints(path.map(toV))
-      hand.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x1cb0f6 })))
+      hand.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: new THREE.Color(color) })))
     }
 
     let rotX = 0.12
@@ -197,7 +205,19 @@ export default function Hand3D({
     <div>
       <div ref={mountRef} style={{ width: '100%', height, cursor: 'grab', touchAction: 'none' }} />
       <div style={{ fontSize: '11px', color: '#afbac0', fontWeight: 700, textAlign: 'center', marginTop: '4px' }}>
-        3D hand • drag to rotate
+        3D hand • drag to rotate •{' '}
+        {[
+          ['Thumb', '#d98a5f'],
+          ['Index', '#58cc02'],
+          ['Middle', '#1cb0f6'],
+          ['Ring', '#ce82ff'],
+          ['Pinky', '#ffc800'],
+        ].map(([n, c], i, a) => (
+          <span key={n}>
+            <span style={{ color: c }}>●</span> {n}
+            {i < a.length - 1 ? '  ' : ''}
+          </span>
+        ))}
       </div>
     </div>
   )
