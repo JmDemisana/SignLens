@@ -29,6 +29,8 @@ export interface ScoreDetail {
   id: string
   score: number // 0..100
   perJoint: number[] // absolute offset per angle
+  correction?: 'bend' | 'extend'
+  secondHand?: boolean
   passed: boolean
 }
 

@@ -51,17 +51,19 @@ export function palmCenter(lm: HandLandmarks): Vec3 {
   return s
 }
 
-export function scoreStatic(live: number[], target: number[], tolerance = 32): { score: number; perJoint: number[] } {
+export function scoreStatic(live: number[], target: number[], tolerance = 32): { score: number; perJoint: number[]; correction?: 'bend' | 'extend' } {
   if (live.length !== 11 || target.length !== 11 || [...live, ...target].some((value) => !Number.isFinite(value))) {
     return { score: 0, perJoint: [] }
   }
   // 10-degree deadzone for monocular landmark jitter
-  const perJoint = live.map((v, i) => Math.max(0, Math.abs(v - (target[i] ?? v)) - 10))
-  const avg = perJoint.reduce((a, b) => a + b, 0) / Math.max(1, perJoint.length)
-  const maxJointErr = Math.max(...perJoint, 0)
+  const perJoint = live.map((value, index) => Math.abs(value - target[index]))
+  const maxOffset = Math.max(...perJoint)
+  const worst = perJoint.indexOf(maxOffset)
+  const avg = perJoint.reduce((sum, value) => sum + Math.max(0, value - 10), 0) / perJoint.length
+  const maxJointErr = Math.max(0, maxOffset - 10)
   // Penalize any individual finger joint that deviates beyond 30 deg so a wrong single finger cannot be hidden by the 11-joint average
   const effectiveErr = avg + Math.max(0, maxJointErr - 30) * 0.4
   void tolerance
   const score = Math.max(0, Math.min(100, 100 * Math.exp(-0.025 * effectiveErr)))
-  return { score, perJoint }
+  return { score, perJoint, correction: live[worst] > target[worst] ? 'bend' : 'extend' }
 }

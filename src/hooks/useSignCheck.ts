@@ -62,7 +62,7 @@ interface Opts {
   targetId: string
   lang: SignLang
   active: boolean
-  resetKey?: number
+  resetKey?: number | string
 }
 
 export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>, { targetId, lang, active, resetKey }: Opts) {
@@ -79,7 +79,8 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
   useEffect(() => {
     const { active, targetId, lang } = token
     if (!active) return
-    const template = findTemplate(targetId)
+    const template = findTemplate(targetId, lang)
+    const personal = supportsPersonalComparison(targetId, lang) ? getPersonalAngles(targetId) : null
     let smoothed: number[] = []
     const motionA = new MotionTrace()
     const motionB = new MotionTrace()
@@ -151,17 +152,16 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
       }
 
       if (template.kind === 'static') {
-        const personal = supportsPersonalComparison(targetId, lang) ? getPersonalAngles(targetId) : null
         const targetAngles = personal && personal.length === 11 ? personal : template.angles
         if (!targetAngles || targetAngles.length !== 11) {
           setDetail(null)
           return
         }
         const s1 = scoreStatic(live, targetAngles)
-        const s2 = lm2 ? scoreStatic(fingerAngles(lm2, aspect), targetAngles) : { score: -1, perJoint: [] }
-        const best = s2.score > s1.score ? s2 : s1
+        const s2 = lm2 ? scoreStatic(fingerAngles(lm2, aspect), targetAngles) : null
+        const best = s2 && s2.score > s1.score ? s2 : s1
         lastScoreAt.current = t
-        setDetail({ id: targetId, score: best.score, perJoint: best.perJoint, passed: best.score >= 78 })
+        setDetail({ id: targetId, ...best, secondHand: best === s2, passed: best.score >= 78 })
       } else if (template.kind === 'dynamic' && template.path) {
         // 1. Track hand count (soft penalty instead of 45%/49% hard lock when an occluded hand drops)
         if (lm2) lastTwoHandsAt = t
@@ -193,26 +193,35 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
         // 3. Evaluate finger handshape (use best-matching hand & keyframe so compound/asymmetric signs work)
         let handshapeScore = 82
         let perJoint: number[] = []
+        let correction: ScoreDetail['correction']
+        let secondHand = false
         const keyShapes = [
           ...(template.angles && template.angles.length === 11 ? [template.angles] : []),
           ...(template.angleKeyframes ?? []).filter((k) => k.length === 11),
         ]
         if (keyShapes.length > 0) {
           const live2 = lm2 ? fingerAngles(lm2, aspect) : null
-          let bestSt = { score: -1, perJoint: [] as number[] }
+          let bestSt: ReturnType<typeof scoreStatic> = { score: -1, perJoint: [] }
           for (const shape of keyShapes) {
             const st1 = scoreStatic(live, shape)
-            if (st1.score > bestSt.score) bestSt = st1
+            if (st1.score > bestSt.score) {
+              bestSt = st1
+              secondHand = false
+            }
             if (live2) {
               const st2 = scoreStatic(live2, shape)
-              if (st2.score > bestSt.score) bestSt = st2
+              if (st2.score > bestSt.score) {
+                bestSt = st2
+                secondHand = true
+              }
             }
           }
           handshapeScore = bestSt.score
           perJoint = bestSt.perJoint
+          correction = bestSt.correction
           if (handshapeScore < 55) {
             lastScoreAt.current = t
-            setDetail({ id: targetId, score: handshapeScore * 0.85, perJoint, passed: false })
+            setDetail({ id: targetId, score: handshapeScore * 0.85, perJoint, correction, secondHand, passed: false })
             return
           }
         }
@@ -223,7 +232,7 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
         const traceB = lm2 ? motionB.sample(template.motionLandmark !== undefined ? lm2[template.motionLandmark] : palmCenter(lm2), t) : null
         if (!traceA && !traceB) {
           lastScoreAt.current = t
-          setDetail({ id: targetId, score: Math.min(68, handshapeScore * 0.72), perJoint, passed: false })
+          setDetail({ id: targetId, score: Math.min(68, handshapeScore * 0.72), perJoint, correction, secondHand, passed: false })
           return
         }
         const dtwA = traceA ? scoreDynamicBoth(traceA, template.path) : 0
@@ -231,7 +240,7 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
         const dtwScore = Math.max(dtwA, dtwB)
         const finalScore = Math.max(0, Math.min(100, dtwScore * 0.6 + handshapeScore * 0.4 - handCountPenalty))
         lastScoreAt.current = t
-        setDetail({ id: targetId, score: finalScore, perJoint, passed: finalScore >= 70 && dtwScore >= 66 && handshapeScore >= 58 })
+        setDetail({ id: targetId, score: finalScore, perJoint, correction, secondHand, passed: finalScore >= 70 && dtwScore >= 66 && handshapeScore >= 58 })
       }
     }
 

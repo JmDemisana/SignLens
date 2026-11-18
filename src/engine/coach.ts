@@ -22,11 +22,12 @@ export function coachAdvice(detail: ScoreDetail, hint: string): string {
     if (detail.score >= 55) return `Try a slightly bigger motion. ${hint}`
     return hint
   }
-  if (detail.score >= 85) return `Looking good! Hold steady.`
+  if (detail.passed) return `Good match. ${hint}`
+  if (!detail.correction) return hint
   const indexed = detail.perJoint.map((v, i) => ({ v, i })).sort((a, b) => b.v - a.v)
   const worst = indexed[0]
   const rule = JOINT_CUES[worst?.i ?? 0] ?? JOINT_CUES[0]
-  if (detail.score >= 65) {
+  if (detail.correction === 'extend') {
     return `${rule.extendCue} ${hint}`
   }
   return `${rule.flexCue} ${hint}`

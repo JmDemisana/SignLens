@@ -11,7 +11,13 @@ function errorMessage(error: unknown) {
 
 export function useCamera(active: boolean) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
-  const [deviceId, setDeviceId] = useState('')
+  const [deviceId, selectDevice] = useState(() => {
+    try { return localStorage.getItem('signlens_camera_device') ?? '' } catch { return '' }
+  })
+  const setDeviceId = (id: string) => {
+    selectDevice(id)
+    try { localStorage.setItem('signlens_camera_device', id) } catch { /* private mode */ }
+  }
   const [request, setRequest] = useState(0)
   const token = useMemo(() => ({ active, deviceId, request }), [active, deviceId, request])
   const [result, setResult] = useState<{ token: typeof token; stream?: MediaStream; error?: string } | null>(null)

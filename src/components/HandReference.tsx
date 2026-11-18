@@ -25,7 +25,7 @@ export default function HandReference({
   height = 185,
   id,
   phraseSigns,
-  activeStep = 0,
+  activeStep,
 }: {
   sign: string
   lang: SignLang
@@ -39,13 +39,13 @@ export default function HandReference({
   const phraseKey = phraseList ? phraseList.join('|') : sign
   const [clipState, setClipState] = useState<{ key: string; idx: number }>({ key: phraseKey, idx: 0 })
   const activeClipIdx = phraseList
-    ? (clipState.key === phraseKey ? clipState.idx % phraseList.length : 0)
+    ? (activeStep ?? (clipState.key === phraseKey ? clipState.idx % phraseList.length : 0))
     : 0
   const playingSign = phraseList ? phraseList[activeClipIdx] : sign
 
   const video = signVideoFor(playingSign, lang)
   const image = !video ? signImageFor(playingSign) : null
-  const template = findTemplate(playingSign)
+  const template = findTemplate(playingSign, lang)
   const steps = howToFor(playingSign)
   const handCountLabel = template?.twoHanded ? '2 Hands' : template?.twoHanded === false ? '1 Hand' : null
   const zoneLabel = template?.zone ? ZONE_LABEL[template.zone] : null
@@ -65,13 +65,15 @@ export default function HandReference({
       {phraseList && (
         <div className="sl-phrase-strip" aria-label="Stitched phrase sequence">
           {phraseList.map((item, idx) => {
-            const done = idx < activeStep
+            const done = activeStep !== undefined && idx < activeStep
             const target = idx === activeStep
             const playing = idx === activeClipIdx
             return (
               <button
                 key={`${item}-${idx}`}
                 type="button"
+                disabled={activeStep !== undefined}
+                aria-current={target ? 'step' : undefined}
                 className={`sl-phrase-chip${done ? ' is-done' : ''}${target ? ' is-target' : ''}${playing ? ' is-playing' : ''}`}
                 onClick={() => setClipState({ key: phraseKey, idx })}
               >
@@ -92,12 +94,12 @@ export default function HandReference({
             src={video}
             controls
             autoPlay
-            loop={!phraseList}
+            loop={!phraseList || activeStep !== undefined}
             muted
             playsInline
             preload="auto"
             onEnded={() => {
-              if (!phraseList) return
+              if (!phraseList || activeStep !== undefined) return
               setClipState({ key: phraseKey, idx: (activeClipIdx + 1) % phraseList.length })
             }}
             aria-label={`FSL demonstration of ${playingSign}`}

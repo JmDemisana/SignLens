@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "SignLens",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "identifier": "com.signlens.app",
   "build": {
     "frontendDist": "../dist",
@@ -35,7 +35,7 @@
   "plugins": {
     "updater": {
       "active": true,
-      "endpoints": ["https://github.com/JmDemisana/SignLens/releases/latest/download/latest.json"],
+      "endpoints": ["https://raw.githubusercontent.com/JmDemisana/SignLens/main/updates/latest.json"],
       "dialog": false,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlEMUU3MEEyQTBDQjBDRDgKUldUWURNdWdvbkFlblNVZlgwME1iWklDUzZqQW1HMTg1dlE5WmdkRTJBdnJrQVErdG1TbVBnRlEK"
     }

@@ -183,6 +183,6 @@ export function templatesForLang(lang: 'ASL' | 'FSL'): PoseTemplate[] {
   return ALL_TEMPLATES.filter((t) => t.lang === 'BOTH' || t.lang === lang)
 }
 
-export function findTemplate(id: string): PoseTemplate | undefined {
-  return ALL_TEMPLATES.find((t) => t.id === id)
+export function findTemplate(id: string, lang: 'FSL' | 'ASL' = 'FSL'): PoseTemplate | undefined {
+  return ALL_TEMPLATES.find((t) => t.id === id && (t.lang === lang || t.lang === 'BOTH'))
 }

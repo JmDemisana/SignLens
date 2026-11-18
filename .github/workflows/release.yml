@@ -29,6 +29,23 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify frontend
+        run: pnpm run lint && pnpm run build
+
+      - name: Test practice flow in Chrome
+        run: python -m pip install playwright==1.62.0 && python tests/practice_flow.py
+
+      - name: Read release notes
+        id: notes
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -ne ('v' + (Get-Content package.json -Raw | ConvertFrom-Json).version)) { throw 'Select the matching version tag to release.' }
+          $notes = Get-Content -Raw -LiteralPath "releases/$tag.md"
+          Add-Content $env:GITHUB_OUTPUT "body<<SIGNLENS_NOTES"
+          Add-Content $env:GITHUB_OUTPUT $notes
+          Add-Content $env:GITHUB_OUTPUT "SIGNLENS_NOTES"
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -38,6 +55,33 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'SignLens ${{ github.ref_name }}'
-          releaseBody: 'Offline webcam practice mirror for Filipino Sign Language (FSL).'
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+      - name: Publish signed updater manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch origin main
+          git switch --detach FETCH_HEAD
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -ne ('v' + (Get-Content package.json -Raw | ConvertFrom-Json).version)) {
+            Write-Host 'A newer release is being prepared on main.'
+            exit 0
+          }
+          gh release download $tag --pattern latest.json --dir $env:RUNNER_TEMP --clobber
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $file = Join-Path $env:RUNNER_TEMP latest.json
+          $manifest = Get-Content $file -Raw | ConvertFrom-Json
+          if ('v' + $manifest.version -ne $tag -or !$manifest.platforms.'windows-x86_64'.signature) { throw 'Invalid updater manifest.' }
+          New-Item -ItemType Directory -Force updates | Out-Null
+          Copy-Item -LiteralPath $file -Destination updates/latest.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          git commit -m "Publish $tag updater manifest"
+          git push origin HEAD:main

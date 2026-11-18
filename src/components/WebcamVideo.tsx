@@ -11,6 +11,7 @@ export default function WebcamVideo({
   secondLandmarks,
   landmarkColor,
   perJoint,
+  secondHand,
 }: {
   stream: MediaStream | null
   isLive: boolean
@@ -20,6 +21,7 @@ export default function WebcamVideo({
   secondLandmarks?: HandLandmarks | null
   landmarkColor?: string
   perJoint?: number[]
+  secondHand?: boolean
 }) {
   const innerRef = useRef<HTMLVideoElement | null>(null)
   const ref = videoRef ?? innerRef
@@ -50,6 +52,6 @@ export default function WebcamVideo({
       style={{ transform: isMirrored ? 'scaleX(-1)' : 'none' }}
       className={`duo-webcam-video ${isLive ? 'active' : 'inactive'}`}
     />
-    {landmarks && <LandmarkOverlay lm={landmarks} secondLm={secondLandmarks} mirrored={isMirrored} color={landmarkColor} aspect={aspect} perJoint={perJoint} />}
+    {landmarks && <LandmarkOverlay lm={landmarks} secondLm={secondLandmarks} mirrored={isMirrored} color={landmarkColor} aspect={aspect} perJoint={perJoint} secondHand={secondHand} />}
   </>
 }

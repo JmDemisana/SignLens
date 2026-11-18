@@ -5,6 +5,7 @@ import './App.css'
 import './platform.css'
 import pkg from '../package.json'
 import HandReference from './components/HandReference'
+import PracticeWindowNotice from './components/PracticeWindowNotice'
 import PracticeGuide from './components/PracticeGuide'
 import LandmarkOverlay from './components/LandmarkOverlay'
 import LearningHub from './components/LearningHub'
@@ -21,7 +22,7 @@ import { completeCourseLesson, findCourseLesson, getCourseProgress, itemsForLess
 import { clearPersonalAngles, isCalibrated, savePersonalAngles } from './engine/personal'
 import { getPracticeList, savedForLanguage, toggleSavedSign } from './engine/practice'
 import { getDailyQuest, getPracticeDays, getProgress, practiceStreak, recordAttempt, recordDailyQuest, recordPracticeDay, totalXP } from './engine/progress'
-import { advancePrompt, getSession, saveSession } from './engine/session'
+import { advancePrompt, clearSessions, finishSession, getSession, saveSession } from './engine/session'
 import type { PracticeSource } from './engine/session'
 import { findTemplate } from './engine/templates'
 import { supportsPersonalComparison } from './engine/personalPilot'
@@ -36,11 +37,23 @@ function readPreference(key: string) {
   catch { return null }
 }
 
-function getRoute(): PublicScreen {
+function routedSession() {
+  const params = new URLSearchParams(window.location.search)
+  const chapterId = params.get('chapter')
+  const lessonId = params.get('lesson')
+  if (params.get('screen') === 'learn_mirror_prompt' && chapterId && lessonId) return getSession('FSL', { kind: 'course', chapterId, lessonId })
+  const active = getSession('FSL')
+  const practice = params.get('practice')
+  if (params.get('screen') === 'learn_mirror_prompt' && practice && practice !== active?.lesson.queue[0]?.id + '/' + active?.source.kind) return null
+  return active
+}
+
+function getRoute(): Screen {
   const params = new URLSearchParams(window.location.search)
   const screen = params.get('screen')
   const matched = publicScreens.find((route) => route === screen)
   if (matched) return matched
+  if (screen === 'learn_mirror_prompt' && routedSession()) return 'learn_mirror_prompt'
   if (screen?.startsWith('learn_')) return 'learn_path'
   if (screen === 'alphabet_drill' || params.get('tab') === 'alphabet') return 'alphabet_grid'
   if (params.get('tab') === 'dictionary') return 'dictionary'
@@ -53,14 +66,18 @@ function readDictionarySign() {
 }
 
 export default function App() {
-  if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('calibrate') === '1') {
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).get('calibrate') === '1') {
     return <VideoCalibrator />
   }
+  return <PracticeApp />
+}
+
+function PracticeApp() {
   const [screen, setScreen] = useState<Screen>(getRoute)
   const [onboardStep, setOnboardStep] = useState(0)
   const [drillReset, setDrillReset] = useState(0)
   const [holdMs, setHoldMs] = useState(0)
-  const holdSaved = useRef(false)
+  const [drillScore, setDrillScore] = useState<number | null>(null)
   const [selectedLetter, setSelectedLetter] = useState('A')
   const [dictionarySign, setDictionarySign] = useState(readDictionarySign)
   const [dictionaryCamera, setDictionaryCamera] = useState(false)
@@ -126,40 +143,49 @@ export default function App() {
 
   const [lang] = useState<SignLang>('FSL')
   const [courseProgress, setCourseProgress] = useState(() => getCourseProgress('FSL'))
-  const [session, setSession] = useState(() => getSession('FSL'))
+  const [session, setSession] = useState(routedSession)
   const [feedback, setFeedback] = useState<{ item: LessonItem; score: ScoreDetail | null; selfReviewed: boolean; xp: number; landmarks: HandLandmarks | null; aspect: number } | null>(null)
   const submitting = useRef(false)
   const lesson = session?.lesson ?? createLesson([])
   const history = session?.history ?? []
   const source = session?.source
   const courseLesson = source?.kind === 'course' ? findCourseLesson(lang, source.chapterId, source.lessonId) : null
-  const unitLabel = courseLesson ? `${courseLesson.chapter.title} · ${courseLesson.lesson.title}` : source?.kind === 'unit' ? 'Previous lesson' : source?.kind === 'saved' ? 'Saved practice' : source?.kind === 'sign' ? definitionFor(source.id).title : 'Practice'
+  const unitLabel = courseLesson ? `${courseLesson.chapter.title} · ${courseLesson.lesson.title}` : source?.kind === 'unit' ? 'Previous lesson' : source?.kind === 'phrase' ? 'Phrase practice' : source?.kind === 'saved' ? 'Saved practice' : source?.kind === 'sign' ? definitionFor(source.id).title : 'Practice'
   const prompt = currentItem(lesson)
   const promptSigns = prompt ? signsFor(prompt) : []
   const learnTarget = promptSigns[session?.step ?? 0] ?? ''
   const learnTemplate = findTemplate(learnTarget)
   const saved = savedForLanguage(lang, savedSigns)
   const activeLesson = screen.startsWith('learn_mirror') || screen === 'learn_complete'
-  const practiceExit = source?.kind === 'saved' ? 'saved' : source?.kind === 'sign' ? 'dictionary' : 'learn_path'
+  const practiceExit = source?.kind === 'saved' ? 'saved' : source?.kind === 'sign' || source?.kind === 'phrase' ? 'dictionary' : 'learn_path'
 
-  const navigateTo = (next: Screen, sign?: string) => {
+  const navigateTo = (next: Screen, sign?: string, nextSource = source) => {
     if (next === 'learn_mirror_prompt') {
       submitting.current = false
       setLearnHoldMs(0)
-      setPracticeCamera(true)
     }
     if (next === 'alphabet_drill') {
-      holdSaved.current = false
+      setDrillScore(null)
       setHoldMs(0)
       setDrillReset((value) => value + 1)
     }
     if (next === 'onboarding') setOnboardStep(0)
     if (next !== 'dictionary') setDictionaryCamera(false)
-    if (!next.startsWith('learn_mirror')) setPracticeCamera(false)
     if (next === 'dictionary') setDictionarySign(sign ?? null)
     setScreen(next)
     const url = new URL(window.location.href)
     url.searchParams.delete('tab')
+    url.searchParams.delete('practice')
+    if (next.startsWith('learn_mirror') && nextSource?.kind !== 'course') {
+      const active = getSession(lang)
+      if (active) url.searchParams.set('practice', active.lesson.queue[0].id + '/' + active.source.kind)
+    }
+    url.searchParams.delete('chapter')
+    url.searchParams.delete('lesson')
+    if (next.startsWith('learn_mirror') && nextSource?.kind === 'course') {
+      url.searchParams.set('chapter', nextSource.chapterId)
+      url.searchParams.set('lesson', nextSource.lessonId)
+    }
     url.searchParams.set('screen', next.startsWith('learn_mirror') ? 'learn_mirror_prompt' : next === 'learn_complete' ? practiceExit : next)
     if (next === 'dictionary' && sign) url.searchParams.set('sign', sign)
     else url.searchParams.delete('sign')
@@ -167,7 +193,7 @@ export default function App() {
       if (next === 'learn_complete' && activeLesson) window.history.replaceState(null, '', url)
       else window.history.pushState(null, '', url)
     }
-    if (next !== screen) window.scrollTo(0, 0)
+    if (next !== screen) document.querySelector('main')?.scrollTo(0, 0)
   }
 
   const selectDictionarySign = (id: string | null) => {
@@ -180,7 +206,15 @@ export default function App() {
 
   useEffect(() => {
     const sync = () => {
-      setScreen(getRoute())
+      const nextScreen = getRoute()
+      if (nextScreen === 'learn_mirror_prompt') {
+        const restored = routedSession()
+        if (restored) saveSession('FSL', restored)
+        setSession(restored)
+        submitting.current = false
+        setLearnHoldMs(0)
+      }
+      setScreen(nextScreen)
       setDictionarySign(readDictionarySign())
       setDictionaryCamera(false)
     }
@@ -194,22 +228,31 @@ export default function App() {
     saveSession(lang, next)
     setSession(next)
     setFeedback(null)
-    navigateTo('learn_mirror_prompt')
+    setPracticeCamera(true)
+    navigateTo('learn_mirror_prompt', undefined, nextSource)
   }
 
   const pickLesson = (chapterId: string, lessonId: string) => {
     const selected = findCourseLesson(lang, chapterId, lessonId)
     if (!selected) return
+    const course = { kind: 'course' as const, chapterId, lessonId }
+    const paused = getSession(lang, course)
+    if (paused) {
+      saveSession(lang, paused)
+      setSession(paused)
+      navigateTo('learn_mirror_prompt', undefined, course)
+      return
+    }
     const stars = lessonStars(courseProgress, chapterId, lessonId)
     startPractice({ kind: 'course', chapterId, lessonId }, itemsForLesson(selected.lesson, stars))
   }
   const startSign = (id: string) => {
-    if (session?.source.kind === 'sign' && session.source.id === id) navigateTo('learn_mirror_prompt')
+    if (session?.source.kind === 'sign' && session.source.id === id && !isFinished(session.lesson)) navigateTo('learn_mirror_prompt')
     else startPractice({ kind: 'sign', id }, [{ id, label: definitionFor(id).title }])
   }
   const startPracticePhrase = (signs: string[], label: string) => {
     if (!signs.length) return
-    startPractice({ kind: 'saved' }, [{ id: signs.join('_'), label, signs }])
+    startPractice({ kind: 'phrase' }, [{ id: signs.join('_'), label, signs }])
   }
   const clearAllLocalProgress = () => {
     try {
@@ -221,7 +264,7 @@ export default function App() {
     clearTelemetryRows()
     setTelemetryCount(0)
     setCourseProgress(resetCourseProgress(lang))
-    saveSession(lang, null)
+    clearSessions(lang)
     setSession(null)
     setSavedSigns([])
     setProgressRec(getProgress())
@@ -233,7 +276,7 @@ export default function App() {
   }
 
   const startPracticeList = () => {
-    if (session?.source.kind === 'saved') navigateTo('learn_mirror_prompt')
+    if (session?.source.kind === 'saved' && !isFinished(session.lesson)) navigateTo('learn_mirror_prompt')
     else startPractice({ kind: 'saved' }, saved.map((id) => ({ id, label: definitionFor(id).title })))
   }
   const toggleSaved = (id: string) => setSavedSigns(toggleSavedSign(id, savedSigns))
@@ -252,6 +295,7 @@ export default function App() {
     targetId: learnTarget,
     lang,
     active: screen === 'learn_mirror_prompt' && isCameraLive,
+    resetKey: `${unitLabel}/${lesson.n}/${session?.step ?? 0}`,
   })
 
   // Alphabet drill tracks whichever letter is selected.
@@ -265,11 +309,11 @@ export default function App() {
   const alphaPassed = alpha.detail?.id === selectedLetter && alpha.detail.passed
   const alphaTemplate = findTemplate(selectedLetter)
   const alphaMotion = alphaTemplate?.kind === 'dynamic'
-  const drillComplete = holdMs >= 2000
+  const drillComplete = drillScore !== null
   const finishDrill = useEffectEvent(() => {
     const score = alpha.detail
-    if (holdSaved.current || !score?.passed || score.id !== selectedLetter || !alpha.hasFreshScore()) return
-    holdSaved.current = true
+    if (drillComplete || !score?.passed || score.id !== selectedLetter || !alpha.hasFreshScore()) return
+    setDrillScore(score.score)
     setHoldMs(2000)
     saveAttempt(score)
     const meanErr = score.perJoint.length ? score.perJoint.reduce((a, b) => a + b, 0) / score.perJoint.length : 0
@@ -285,7 +329,7 @@ export default function App() {
     setTelemetryCount(getTelemetryRows().length)
   })
   useEffect(() => {
-    if (screen !== 'alphabet_drill' || !alphaPassed || !isCameraLive || holdSaved.current) return
+    if (screen !== 'alphabet_drill' || !alphaPassed || !isCameraLive || drillComplete) return
     if (alphaMotion) {
       const timer = window.setTimeout(() => finishDrill(), 0)
       return () => window.clearTimeout(timer)
@@ -299,8 +343,9 @@ export default function App() {
     return () => {
       window.clearInterval(interval)
       window.clearTimeout(timeout)
+      setHoldMs(0)
     }
-  }, [screen, selectedLetter, alphaPassed, alphaMotion, isCameraLive, drillReset])
+  }, [screen, selectedLetter, alphaPassed, alphaMotion, isCameraLive, drillReset, drillComplete])
 
   const dictVideoRef = useRef<HTMLVideoElement | null>(null)
 
@@ -345,7 +390,8 @@ export default function App() {
       const average = next.history.length ? next.history.reduce((sum, result) => sum + result.score, 0) / next.history.length : 0
       setCourseProgress(completeCourseLesson(lang, source.chapterId, source.lessonId, average, courseProgress))
     }
-    saveSession(lang, completed ? null : next)
+    if (completed) finishSession(lang, next.source)
+    else saveSession(lang, next)
     setSession(next)
     if (advancedStep) {
       submitting.current = false
@@ -354,12 +400,13 @@ export default function App() {
     }
     const video = mirrorVideoRef.current
     const aspect = video?.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9
-    setFeedback({ item: { id: learnTarget, label: definitionFor(learnTarget).title }, score, selfReviewed, xp, landmarks: score ? live.landmarks : null, aspect })
+    setFeedback({ item: { id: learnTarget, label: definitionFor(learnTarget).title }, score, selfReviewed, xp, landmarks: score ? score.secondHand ? live.secondLandmarks : live.landmarks : null, aspect })
     navigateTo(completed ? 'learn_complete' : score?.passed || selfReviewed ? 'learn_mirror_correct' : 'learn_mirror_incorrect')
   }
 
   const learnPassed = live.detail?.id === learnTarget && live.detail.passed
   const learnMotion = learnTemplate?.kind === 'dynamic'
+  const freshLessonScore = () => live.detail?.id === learnTarget && live.hasFreshScore() ? live.detail : null
   const autoSubmitLearn = useEffectEvent(() => {
     if (submitting.current || !live.detail?.passed || !live.hasFreshScore()) return
     finishPrompt(live.detail, false)
@@ -367,7 +414,7 @@ export default function App() {
   useEffect(() => {
     if (screen !== 'learn_mirror_prompt' || !learnPassed || !isCameraLive || submitting.current) return
     if (learnMotion) {
-      const timer = window.setTimeout(() => autoSubmitLearn(), 200)
+      const timer = window.setTimeout(() => autoSubmitLearn(), 0)
       return () => window.clearTimeout(timer)
     }
     const started = performance.now()
@@ -382,7 +429,7 @@ export default function App() {
       window.clearTimeout(timeout)
       setLearnHoldMs(0)
     }
-  }, [screen, learnTarget, learnPassed, learnMotion, isCameraLive])
+  }, [screen, learnTarget, learnPassed, learnMotion, isCameraLive, lesson.n, session?.step])
   const sessionSummary = summarizeSession(history)
   const progressPct = Math.min(100, Math.round(((lesson.n - 1) / Math.max(1, lesson.t)) * 100))
 
@@ -476,6 +523,7 @@ export default function App() {
       </header>
 
       <main className={`duo-main-content${['home', 'learn_path', 'saved', 'progress', 'dictionary'].includes(screen) ? ' sl-main' : ''}`}>
+        {(screen === 'learn_mirror_prompt' || screen === 'alphabet_drill') && <PracticeWindowNotice />}
         {/* ========================================================================= */}
         {/* ONBOARDING: welcome, how it works, camera setup */}
         {/* ========================================================================= */}
@@ -569,7 +617,7 @@ export default function App() {
                   </div>
                   {cameraError && (
                     <div className="duo-camera-error-banner">
-                      <span>{cameraError}. Click Allow in the prompt up top.</span>
+                      <span>{cameraError}</span>
                       <button onClick={retryCamera} className="duo-camera-retry-btn">
                         Retry Camera
                       </button>
@@ -691,7 +739,7 @@ export default function App() {
               {/* Left: Camera Feed Viewfinder */}
               <div className="duo-camera-card">
                 <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} videoRef={mirrorVideoRef}
-                  landmarks={showSkeleton ? live.landmarks : null} secondLandmarks={showSkeleton ? live.secondLandmarks : null} landmarkColor={live.detail?.passed ? '#9bfa5e' : '#75d9ff'} perJoint={live.detail?.perJoint} />
+                  landmarks={showSkeleton ? live.landmarks : null} secondLandmarks={showSkeleton ? live.secondLandmarks : null} landmarkColor={live.detail?.passed ? '#9bfa5e' : '#75d9ff'} perJoint={live.detail?.perJoint} secondHand={live.detail?.secondHand} />
                 {showGhost && !live.landmarks && <PracticeGuide sign={learnTarget} flip={hand === 'Left'} active={isCameraLive} />}
                 <div
                   className="duo-camera-badge"
@@ -707,7 +755,7 @@ export default function App() {
                   {!isCameraLive
                     ? 'CAMERA OFF'
                     : live.failed
-                      ? 'CAMERA UNAVAILABLE'
+                      ? 'TRACKING UNAVAILABLE'
                       : !live.ready
                         ? 'STARTING...'
                         : live.secondLandmarks
@@ -720,6 +768,7 @@ export default function App() {
                               ? 'SHOW BOTH HANDS'
                               : 'SHOW HAND'}
                 </div>
+                {practiceCamera && !cameraError && <button className="sl-camera-off" onClick={() => setPracticeCamera(false)}>Turn off camera</button>}
                 {!practiceCamera && <div className="sl-scan-placeholder"><Camera size={30} /><button className="duo-btn duo-btn-blue" onClick={() => setPracticeCamera(true)}>Turn on camera</button></div>}
                 {cameraError && (
                   <div className="duo-camera-error-banner">
@@ -734,13 +783,14 @@ export default function App() {
               {/* Right: Target Prompt & Helper */}
               <div className="duo-prompt-card">
                 <div>
+                  <div className="sl-course-context">{unitLabel} · Prompt {lesson.n} of {lesson.t}</div>
                   {promptSigns.length > 1 ? (
                     <>
                       <div className="sl-phrase-title">{prompt?.label}</div>
-                      <strong className="sl-target-sign">{learnTarget}</strong>
+                      <strong className="sl-target-sign">{definitionFor(learnTarget).title}</strong>
                     </>
                   ) : (
-                    <strong className="sl-target-sign">{learnTarget}</strong>
+                    <strong className="sl-target-sign">{definitionFor(learnTarget).title}</strong>
                   )}
                 </div>
 
@@ -758,10 +808,13 @@ export default function App() {
             </div>
 
             <div className="duo-bottom-bar sl-practice-actions">
-              <button className="duo-btn duo-btn-green" onClick={() => finishPrompt(live.detail ?? { id: learnTarget, score: 88, perJoint: [], passed: true }, !live.detail)}>
-                Continue <ArrowRight size={17} />
+              <button className="duo-btn duo-btn-green" onClick={() => {
+                const score = freshLessonScore()
+                finishPrompt(score, !score)
+              }}>
+                {live.detail ? 'Submit attempt' : 'Finish self-review'} <ArrowRight size={17} />
               </button>
-              <button className="duo-btn duo-btn-secondary" onClick={() => finishPrompt({ id: learnTarget, score: live.detail?.score ?? 45, perJoint: live.detail?.perJoint ?? [], passed: false }, false)}>
+              <button className="duo-btn duo-btn-secondary" onClick={() => finishPrompt(null)}>
                 Skip
               </button>
             </div>
@@ -797,7 +850,7 @@ export default function App() {
                 <h2>{feedback.selfReviewed ? 'Nice!' : feedback.score?.passed ? 'Great job!' : 'Try again'}</h2>
                 <p>{feedback.score
                   ? coachAdvice(feedback.score, findTemplate(feedback.item.id)?.hint ?? '')
-                  : 'This sign will come back before you finish.'}</p>
+                  : feedback.selfReviewed ? 'You reviewed this sign.' : 'This prompt will come back before you finish.'}</p>
                 {feedback.xp > 0 && <span>+{feedback.xp} XP</span>}
               </div>
               <button className={`duo-btn ${feedback.score?.passed || feedback.selfReviewed ? 'duo-btn-green' : 'duo-btn-red'}`} onClick={() => navigateTo('learn_mirror_prompt')}>Continue <ArrowRight size={17} /></button>
@@ -835,7 +888,7 @@ export default function App() {
                     const earned = lessonStars(courseProgress, source.chapterId, source.lessonId)
                     return <Star key={i} size={30} className={`sl-star${i < earned ? ' is-earned' : ''}`} fill={i < earned ? 'currentColor' : 'none'} />
                   })}
-                  <span>Star {lessonStars(courseProgress, source.chapterId, source.lessonId)} / 3</span>
+                  <span>{lessonStars(courseProgress, source.chapterId, source.lessonId)} / 3 stars{!history.length && ' · Self-review only'}</span>
                 </div>
               )}
               <div className="duo-celebration-subtitle">
@@ -846,7 +899,7 @@ export default function App() {
             {/* 3 Result Cards */}
             <div className="duo-results-grid">
               <div className="duo-result-card">
-                <div className="duo-result-lbl">Prompts completed</div>
+                <div className="duo-result-lbl">Practice prompts</div>
                 <div className="duo-result-val" style={{ color: '#ffc800' }}>
                   {lesson.n - 1}
                 </div>
@@ -860,7 +913,7 @@ export default function App() {
                 <div className="duo-result-val" style={{ color: '#58cc02' }}>
                   {history.length ? `${Math.round(history.reduce((a, h) => a + h.score, 0) / history.length)}%` : '--'}
                 </div>
-                <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>Earlier scored attempts only</span>
+                <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>Recorded camera attempts</span>
               </div>
 
               <div className="duo-result-card">
@@ -1023,7 +1076,7 @@ export default function App() {
                 Letter {selectedLetter}
               </div>
               <button className="duo-btn duo-btn-secondary" style={{ padding: '6px 14px', fontSize: '12px' }} onClick={() => {
-                holdSaved.current = false
+                setDrillScore(null)
                 setHoldMs(0)
                 setDrillReset((value) => value + 1)
               }}>
@@ -1036,17 +1089,17 @@ export default function App() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <CheckCircle2 size={22} color="#58cc02" />
                 <div style={{ fontSize: '14px', fontWeight: 900, color: '#ffffff' }}>
-                  {drillComplete ? `Nice! (${Math.round(alpha.detail?.score ?? 100)}%)` : alpha.detail ? `Hold steady · ${(holdMs / 1000).toFixed(1)}s` : alphaMotion ? 'Trace the letter' : 'Show letter handshape'}
+                  {drillComplete ? `Nice! (${Math.round(drillScore ?? 0)}%)` : alpha.detail ? `Hold steady · ${(holdMs / 1000).toFixed(1)}s` : alphaMotion ? 'Trace the letter' : 'Show letter handshape'}
                 </div>
               </div>
-              {alpha.detail && <progress className="sl-lesson-progress" style={{ flex: '0 1 120px' }} value={alphaPassed || drillComplete ? holdMs : 0} max={2000} aria-label="Time held" />}
+              {(alpha.detail || drillComplete) && <progress className="sl-lesson-progress" style={{ flex: '0 1 120px' }} value={drillComplete ? 2000 : alphaPassed ? holdMs : 0} max={2000} aria-label="Time held" />}
             </div>
 
             {/* Drill Body */}
             <div className="duo-quiz-body">
               <div className="duo-camera-card">
                 <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} videoRef={alphaVideoRef}
-                  landmarks={showSkeleton ? alpha.landmarks : null} secondLandmarks={showSkeleton ? alpha.secondLandmarks : null} landmarkColor={alpha.detail?.passed ? '#9bfa5e' : '#75d9ff'} perJoint={alpha.detail?.perJoint} />
+                  landmarks={showSkeleton ? alpha.landmarks : null} secondLandmarks={showSkeleton ? alpha.secondLandmarks : null} landmarkColor={alpha.detail?.passed ? '#9bfa5e' : '#75d9ff'} perJoint={alpha.detail?.perJoint} secondHand={alpha.detail?.secondHand} />
                 {showGhost && !alpha.landmarks && <PracticeGuide sign={selectedLetter} flip={hand === 'Left'} active={isCameraLive} />}
                 <div
                   className="duo-camera-badge"
@@ -1059,7 +1112,7 @@ export default function App() {
                     className={`duo-camera-dot ${isCameraLive ? 'live' : ''}`}
                     style={{ background: '#58cc02' }}
                   ></span>
-                  {alpha.landmarks ? 'HAND DETECTED' : isCameraLive ? 'LIVE CAMERA' : 'CAMERA OFF'}
+                  {alpha.failed ? 'TRACKING UNAVAILABLE' : alpha.landmarks ? 'HAND DETECTED' : isCameraLive ? 'LIVE CAMERA' : 'CAMERA OFF'}
                 </div>
                 {cameraError && (
                   <div className="duo-camera-error-banner">
@@ -1096,6 +1149,8 @@ export default function App() {
                     onClick={() => {
                       if (isCalibrated(selectedLetter)) clearPersonalAngles(selectedLetter)
                       else savePersonalAngles(selectedLetter, alpha.angles)
+                      setDrillScore(null)
+                      setHoldMs(0)
                       setDrillReset((value) => value + 1)
                     }}
                   >
@@ -1300,10 +1355,10 @@ export default function App() {
                 setOnboardStep(2)
               }}>Test your camera</button>
               <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
-                SignLens gives practice feedback for isolated signs using one tracked hand.
+                SignLens estimates handshape and motion from up to two tracked hands.
               </div>
               <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
-                Signer videos are credited with each demonstration. MediaPipe hand and pose models by Google.
+                FSL-105 signer videos by Tupal and Cabatuan (CC BY 4.0). Hand tracking by MediaPipe.
               </div>
             </div>
           </div>

@@ -1,7 +1,7 @@
 import { fingerAngles, scoreStatic } from './angles'
 import { scoreDynamicBoth } from './dtw'
 import { STATIC_TEMPLATES, templatesForLang } from './templates'
-import { getPersonalAngles } from './personal'
+import { getPersonalAngles, getPersonalReferences } from './personal'
 import { FSL_DEFINITIONS } from './fsl'
 import type { HandLandmarks, SignLang, Vec3 } from './types'
 
@@ -23,10 +23,11 @@ export function lookupTop3(
   if (!lm || lm.length < 21) return []
   const live = fingerAngles(lm, aspect)
   const candidates: DictResult[] = []
+  const references = getPersonalReferences()
 
   for (const t of templatesForLang(lang)) {
     if (t.kind === 'static' && t.angles) {
-      const target = getPersonalAngles(t.id) ?? t.angles
+      const target = getPersonalAngles(t.id, references) ?? t.angles
       const { score } = scoreStatic(live, target)
       candidates.push({ id: t.id, score, hint: t.hint })
     } else if (t.kind === 'dynamic' && t.path && motionTrace && motionTrace.length >= 6) {

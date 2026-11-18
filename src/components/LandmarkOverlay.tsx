@@ -34,6 +34,7 @@ export default function LandmarkOverlay({
   mirrored = true,
   aspect = 16 / 9,
   perJoint,
+  secondHand = false,
 }: {
   lm: HandLandmarks | null
   secondLm?: HandLandmarks | null
@@ -41,6 +42,7 @@ export default function LandmarkOverlay({
   mirrored?: boolean
   aspect?: number
   perJoint?: number[]
+  secondHand?: boolean
 }) {
   if (!lm || lm.length < 21) return null
   const width = 500 * aspect
@@ -84,7 +86,7 @@ export default function LandmarkOverlay({
 
             {/* Color-coded finger chains */}
             {FINGER_GROUPS.map((fg) => {
-              const fingerBad = hIdx === 0 && perJoint && fg.errIdx.some((idx) => (perJoint[idx] ?? 0) > 16)
+              const fingerBad = hIdx === Number(secondHand) && perJoint && fg.errIdx.some((idx) => (perJoint[idx] ?? 0) > 16)
               const strokeCol = fingerBad ? '#ff4b4b' : fg.color
               return fg.chain.slice(1).map((b, i) => {
                 const a = fg.chain[i]
@@ -101,7 +103,7 @@ export default function LandmarkOverlay({
           {/* 21 Joint Keypoints */}
           <g>
             {handPts.map((p, i) => {
-              const bad = hIdx === 0 && hasJointError(i)
+              const bad = hIdx === Number(secondHand) && hasJointError(i)
               const fCol = bad ? '#ff4b4b' : pointFingerColor(i)
               const isTipOrWrist = i === 0 || i % 4 === 0
               return (

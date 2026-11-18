@@ -78,7 +78,7 @@ export default function LearningHub(props: Props) {
         <div className="sl-roadmap">
           <section className="sl-roadmap-main" aria-label="FSL learning path">
             {session && !current && (
-              <button className="sl-resume-strip" onClick={onResume}><Play size={17} /> Continue {session.source.kind === 'saved' ? 'saved signs' : session.source.kind === 'sign' ? definitionFor(session.source.id).title : 'lesson'} <ArrowRight size={17} /></button>
+              <button className="sl-resume-strip" onClick={onResume}><Play size={17} /> Continue {session.source.kind === 'saved' ? 'saved signs' : session.source.kind === 'phrase' ? 'phrase practice' : session.source.kind === 'sign' ? definitionFor(session.source.id).title : 'lesson'} <ArrowRight size={17} /></button>
             )}
             {curriculum.map((chapter, chapterIndex) => {
               const unitStars = chapter.lessons.reduce((sum, item) => sum + starsOf(chapter.id, item.id), 0)

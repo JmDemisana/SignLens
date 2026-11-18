@@ -10,6 +10,7 @@ import type { HandLandmarks, SignLang } from '../engine/types'
 import HandReference from './HandReference'
 import { signVideoFor, fslVideoEntries, fslVideoInfo } from '../engine/signVideos'
 import type { PoseTemplate } from '../engine/types'
+import PracticeWindowNotice from './PracticeWindowNotice'
 import WebcamVideo from './WebcamVideo'
 
 interface Props {
@@ -64,14 +65,13 @@ export default function SignDictionary(props: Props) {
   const filteredEntries = entries.filter(({ id }) => {
     if (filter === 'course') return courseIds.has(id)
     if (filter === 'letters') return /^[A-Z]$/.test(id)
-    if (filter === 'digits') return /^[0-9]$/.test(id)
+    if (filter === 'digits') return /^\d+$/.test(id)
     if (filter === 'saved') return saved.includes(id)
     return true
   })
   const matches = filteredEntries.filter(({ id }) => !q || id.includes(q) || definitionFor(id).title.toUpperCase().includes(q) || (fslVideoInfo(id)?.label.includes(q) ?? false))
     .sort((a, b) => Number(b.id === q) - Number(a.id === q) || Number(b.id.startsWith(q)) - Number(a.id.startsWith(q)))
   const entry = matches.find(({ id }) => id === (selectedId ?? (!q ? 'KAMUSTA' : null)))
-    ?? (!q ? entries.find(({ id }) => id === selectedId) : undefined)
     ?? matches[0]
   const detected = candidates[0]
   const info = entry && definitionFor(entry.id)
@@ -114,12 +114,14 @@ export default function SignDictionary(props: Props) {
       active = false
       window.clearInterval(timer)
       setLandmarks(null)
+      setSecondLandmarks(null)
       setCandidates([])
     }
   }, [stream, entries, lang, videoRef])
 
   const openSign = (id: string) => {
     setQuery('')
+    setFilter('all')
     onSelect(id)
   }
 
@@ -169,6 +171,7 @@ export default function SignDictionary(props: Props) {
           <p className="sl-dict-message" role="status">No signs match “{query.trim() || filter}”.</p>
         )}
       </div>
+      {cameraEnabled && <PracticeWindowNotice />}
       <div className="sl-dict-layout">
         <section className="sl-card sl-scanner">
           <div className="sl-card-heading">

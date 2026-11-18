@@ -6,17 +6,7 @@ let landmarker: HandLandmarker | null = null
 let loading: Promise<HandLandmarker | null> | null = null
 
 export function loadHandLandmarker(): Promise<HandLandmarker | null> {
-  if (landmarker) {
-    try {
-      void landmarker.setOptions({
-        numHands: 2,
-        minHandDetectionConfidence: 0.2,
-        minHandPresenceConfidence: 0.2,
-        minTrackingConfidence: 0.2,
-      })
-    } catch { /* ignore */ }
-    return Promise.resolve(landmarker)
-  }
+  if (landmarker) return Promise.resolve(landmarker)
   if (loading) return loading
   loading = (async () => {
     try {

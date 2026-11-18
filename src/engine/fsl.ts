@@ -202,7 +202,7 @@ export const FSL_DEFINITIONS: Record<string, { title: string; sub: string; desc:
     item.id,
     {
       title: item.title,
-      sub: `${item.category} · ${item.twoHanded ? '2 Hands' : '1 Hand'}`,
+      sub: `${item.category} · ${(calibrated[item.id]?.twoHanded ?? item.twoHanded) ? '2 Hands' : '1 Hand'}`,
       desc: item.desc ?? item.hint,
     },
   ]),
