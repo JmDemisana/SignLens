@@ -524,8 +524,15 @@ export function getCourseProgress(lang: SignLang): CourseProgress {
 export function completeCourseLesson(lang: SignLang, chapterId: string, lessonId: string, score: number, current: CourseProgress): CourseProgress {
   const key = lessonKey(chapterId, lessonId)
   const prevStars = current[key] ? Math.max(1, current[key].stars ?? 1) : 0
-  const stars = Math.min(3, prevStars + 1)
+  if (score < 45 && prevStars === 0) return current
+  const earnedFromScore = score >= 88 ? 3 : score >= 70 ? 2 : score >= 45 ? 1 : 0
+  const stars = Math.min(3, Math.max(prevStars + (score >= 45 ? 1 : 0), earnedFromScore))
   const next = { ...current, [key]: { completedAt: new Date().toISOString(), best: Math.max(current[key]?.best ?? 0, score), stars } }
   try { localStorage.setItem('signlens_course_v1_' + lang, JSON.stringify(next)) } catch { /* local storage unavailable */ }
   return next
+}
+
+export function resetCourseProgress(lang: SignLang): CourseProgress {
+  try { localStorage.removeItem('signlens_course_v1_' + lang) } catch { /* local storage unavailable */ }
+  return {}
 }

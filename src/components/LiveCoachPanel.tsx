@@ -8,7 +8,7 @@ export default function LiveCoachPanel({ detail, landmarks, advice, holdLabel, m
   motion?: boolean
 }) {
   const score = detail ? Math.max(0, Math.min(100, Math.round(detail.score))) : 0
-  const passThreshold = motion ? 82 : 85
+  const passThreshold = motion ? 70 : 78
   const tier = !detail
     ? 'idle'
     : score >= passThreshold && detail.passed

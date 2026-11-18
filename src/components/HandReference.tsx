@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Check, PlayCircle } from 'lucide-react'
 import { definitionFor, howToFor } from '../engine/dictionary'
-import { signVideoFor } from '../engine/signVideos'
+import { signImageFor, signVideoFor } from '../engine/signVideos'
 import { findTemplate } from '../engine/templates'
 import type { SignLang } from '../engine/types'
 import { referencePose } from '../engine/referenceHands'
@@ -44,6 +44,7 @@ export default function HandReference({
   const playingSign = phraseList ? phraseList[activeClipIdx] : sign
 
   const video = signVideoFor(playingSign, lang)
+  const image = !video ? signImageFor(playingSign) : null
   const template = findTemplate(playingSign)
   const steps = howToFor(playingSign)
   const handCountLabel = template?.twoHanded ? '2 Hands' : template?.twoHanded === false ? '1 Hand' : null
@@ -101,13 +102,29 @@ export default function HandReference({
             }}
             aria-label={`FSL demonstration of ${playingSign}`}
           />
+        ) : image ? (
+          <img
+            className="sl-sign-video"
+            style={{
+              maxHeight: height,
+              height: '100%',
+              width: '100%',
+              objectFit: 'contain',
+              background: '#ffffff',
+              padding: 12,
+              borderRadius: 10,
+              transform: flip ? 'scaleX(-1)' : undefined,
+            }}
+            src={image}
+            alt={`FSL fingerspelling reference for ${playingSign}`}
+          />
         ) : (
           <HandDiagram pose={referencePose(playingSign)} sign={playingSign} flip={flip} />
         )}
       </div>
 
       <div className="sl-ref-cues">
-        <div>{template?.hint ?? steps.start}</div>
+        <div>{steps.start} {steps.motion}</div>
       </div>
     </section>
   )

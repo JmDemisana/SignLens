@@ -14,6 +14,8 @@ export interface PoseTemplate {
   // Static: target joint angles in degrees.
   // Order: [thumbMCP, thumbIP, indexMCP, indexPIP, middleMCP, middlePIP, ringMCP, ringPIP, pinkyMCP, pinkyPIP, wristPitch]
   angles?: number[]
+  // Optional multiple keyframe handshapes (for two-part compound signs)
+  angleKeyframes?: number[][]
   // Dynamic: reference palm-center path, normalized 0..1
   path?: Vec3[]
   motionLandmark?: number

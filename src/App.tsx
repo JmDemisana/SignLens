@@ -10,13 +10,14 @@ import LandmarkOverlay from './components/LandmarkOverlay'
 import LearningHub from './components/LearningHub'
 import LiveCoachPanel from './components/LiveCoachPanel'
 import SignDictionary from './components/SignDictionary'
+import VideoCalibrator from './components/VideoCalibrator'
 import WebcamVideo from './components/WebcamVideo'
 import { useCamera } from './hooks/useCamera'
 import { appendTelemetryRow, clearTelemetryRows, exportTelemetryCsv, getTelemetryRows, useSignCheck } from './hooks/useSignCheck'
 import { coachAdvice, summarizeSession } from './engine/coach'
 import { definitionFor } from './engine/dictionary'
 import { createLesson, currentItem, isFinished } from './engine/lesson'
-import { completeCourseLesson, findCourseLesson, getCourseProgress, itemsForLesson, lessonStars, signsFor } from './engine/course'
+import { completeCourseLesson, findCourseLesson, getCourseProgress, itemsForLesson, lessonStars, resetCourseProgress, signsFor } from './engine/course'
 import { clearPersonalAngles, isCalibrated, savePersonalAngles } from './engine/personal'
 import { getPracticeList, savedForLanguage, toggleSavedSign } from './engine/practice'
 import { getDailyQuest, getPracticeDays, getProgress, practiceStreak, recordAttempt, recordDailyQuest, recordPracticeDay, totalXP } from './engine/progress'
@@ -52,6 +53,9 @@ function readDictionarySign() {
 }
 
 export default function App() {
+  if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('calibrate') === '1') {
+    return <VideoCalibrator />
+  }
   const [screen, setScreen] = useState<Screen>(getRoute)
   const [onboardStep, setOnboardStep] = useState(0)
   const [drillReset, setDrillReset] = useState(0)
@@ -63,6 +67,7 @@ export default function App() {
   const [practiceCamera, setPracticeCamera] = useState(true)
   const [learnHoldMs, setLearnHoldMs] = useState(0)
   const [telemetryCount, setTelemetryCount] = useState(() => getTelemetryRows().length)
+  const [confirmResetAll, setConfirmResetAll] = useState(false)
   const [savedSigns, setSavedSigns] = useState(getPracticeList)
   const [progressRec, setProgressRec] = useState(getProgress)
   const [practiceDays, setPracticeDays] = useState(getPracticeDays)
@@ -206,6 +211,27 @@ export default function App() {
     if (!signs.length) return
     startPractice({ kind: 'saved' }, [{ id: signs.join('_'), label, signs }])
   }
+  const clearAllLocalProgress = () => {
+    try {
+      localStorage.removeItem('signlens_progress_v1')
+      localStorage.removeItem('signlens_scored_days_v2')
+      localStorage.removeItem('signlens_daily_quest_v1')
+      localStorage.removeItem('signlens_practice_v1')
+    } catch { /* ignore */ }
+    clearTelemetryRows()
+    setTelemetryCount(0)
+    setCourseProgress(resetCourseProgress(lang))
+    saveSession(lang, null)
+    setSession(createLessonSession(lang, 'home', createLesson(signsFor(lang).slice(0, 4))))
+    setSavedSigns([])
+    setProgressRec(getProgress())
+    setPracticeDays(getPracticeDays())
+    setDailyQuest(getDailyQuest())
+  }
+  const handleResetAllProgress = () => {
+    clearAllLocalProgress()
+  }
+
   const startPracticeList = () => {
     if (session?.source.kind === 'saved') navigateTo('learn_mirror_prompt')
     else startPractice({ kind: 'saved' }, saved.map((id) => ({ id, label: definitionFor(id).title })))
@@ -341,7 +367,7 @@ export default function App() {
   useEffect(() => {
     if (screen !== 'learn_mirror_prompt' || !learnPassed || !isCameraLive || submitting.current) return
     if (learnMotion) {
-      const timer = window.setTimeout(() => autoSubmitLearn(), 550)
+      const timer = window.setTimeout(() => autoSubmitLearn(), 200)
       return () => window.clearTimeout(timer)
     }
     const started = performance.now()
@@ -637,6 +663,7 @@ export default function App() {
             onPracticeSaved={startPracticeList}
             onOpenSign={openSign}
             onRemoveSign={toggleSaved}
+            onReset={handleResetAllProgress}
           />
         )}
 
@@ -1230,6 +1257,21 @@ export default function App() {
                 </button>
                 <button className="duo-btn duo-btn-secondary" style={{ padding: '10px 18px' }} onClick={() => { clearTelemetryRows(); setTelemetryCount(0) }}>
                   Clear Telemetry Log
+                </button>
+                <button
+                  className="duo-btn duo-btn-secondary"
+                  style={{ padding: '10px 18px', ...(confirmResetAll ? { color: '#ff8a80', borderColor: '#ff4b4b' } : {}) }}
+                  onClick={() => {
+                    if (!confirmResetAll) {
+                      setConfirmResetAll(true)
+                      return
+                    }
+                    setConfirmResetAll(false)
+                    handleResetAllProgress()
+                  }}
+                  onBlur={() => setConfirmResetAll(false)}
+                >
+                  {confirmResetAll ? 'Confirm Reset All Progress?' : 'Reset All Progress & Stars'}
                 </button>
               </div>
             </div>

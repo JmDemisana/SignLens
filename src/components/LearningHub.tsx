@@ -1,4 +1,5 @@
-import { ArrowRight, Bookmark, Camera, ChartNoAxesColumnIncreasing, Check, Crown, Flame, Play, Sparkles, Star, Trophy, X } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowRight, Bookmark, Camera, ChartNoAxesColumnIncreasing, Check, Crown, Flame, Play, RotateCcw, Sparkles, Star, Trophy, X } from 'lucide-react'
 import { definitionFor } from '../engine/dictionary'
 import { courseForLang, findCourseLesson, lessonStars } from '../engine/course'
 import type { CourseProgress } from '../engine/course'
@@ -26,6 +27,7 @@ interface Props {
   onPracticeSaved: () => void
   onOpenSign: (id: string) => void
   onRemoveSign: (id: string) => void
+  onReset?: () => void
 }
 
 function Week({ days }: { days: string[] }) {
@@ -50,7 +52,8 @@ function Week({ days }: { days: string[] }) {
 }
 
 export default function LearningHub(props: Props) {
-  const { page, progress, days, saved, session, courseProgress, onNavigate, onLesson, onResume, onPracticeSaved, onOpenSign, onRemoveSign } = props
+  const { page, progress, days, saved, session, courseProgress, onNavigate, onLesson, onResume, onPracticeSaved, onOpenSign, onRemoveSign, onReset } = props
+  const [confirmReset, setConfirmReset] = useState(false)
   const curriculum = courseForLang('FSL')
   const all = templatesForLang('FSL')
   const trained = all.filter(({ id }) => progress[id])
@@ -106,7 +109,9 @@ export default function LearningHub(props: Props) {
                         ? `${session.lesson.n} of ${session.lesson.t}`
                         : mastered
                           ? '3/3 Stars · Mastered'
-                          : `Star ${stars + 1} · ${STAGE_NAMES[stars]}`
+                          : stars > 0
+                            ? `${stars}/3 Stars · Next: ${STAGE_NAMES[stars]}`
+                            : '0/3 Stars · Words'
                       const stateClass = active ? 'is-current' : mastered ? 'is-done' : stars > 0 ? 'is-partial' : 'is-new'
                       return <li className={stateClass} key={lesson.id}>
                         <button className="sl-path-step" onClick={resume ? onResume : () => onLesson(chapter.id, lesson.id)} aria-current={active ? 'step' : undefined}>
@@ -146,6 +151,23 @@ export default function LearningHub(props: Props) {
             <div className="sl-roadmap-links">
               <button className="sl-button sl-secondary" onClick={() => onNavigate('saved')}><Bookmark size={16} /> Saved</button>
               <button className="sl-button sl-secondary" onClick={() => onNavigate('progress')}><ChartNoAxesColumnIncreasing size={17} /> Progress</button>
+              {onReset && (
+                <button
+                  className="sl-button sl-secondary"
+                  style={confirmReset ? { color: '#ff8a80', borderColor: '#ff4b4b' } : undefined}
+                  onClick={() => {
+                    if (!confirmReset) {
+                      setConfirmReset(true)
+                      return
+                    }
+                    setConfirmReset(false)
+                    onReset()
+                  }}
+                  onBlur={() => setConfirmReset(false)}
+                >
+                  <RotateCcw size={16} /> {confirmReset ? 'Confirm Reset?' : 'Reset'}
+                </button>
+              )}
             </div>
           </aside>
         </div>

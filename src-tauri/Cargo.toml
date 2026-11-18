@@ -1,6 +1,6 @@
 [package]
 name = "signlens"
-version = "0.1.0-alpha"
+version = "0.1.0-alpha.2"
 description = "SignLens offline webcam practice mirror"
 authors = ["SignLens"]
 edition = "2021"

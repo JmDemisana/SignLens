@@ -45,3 +45,7 @@ export function signVideoFor(sign: string, lang: SignLang): string | null {
   const item = fslVideoInfo(sign)
   return item ? `${import.meta.env.BASE_URL}sign-videos/fsl105/${item.id}.mov` : null
 }
+
+export function signImageFor(sign: string): string | null {
+  return /^[A-Z]$/.test(sign) ? `${import.meta.env.BASE_URL}sign-images/alphabet/${sign}.svg` : null
+}

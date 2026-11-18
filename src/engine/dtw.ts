@@ -97,13 +97,13 @@ export function scoreDynamic(live: Vec3[], target: Vec3[]): number {
   let dirPenalty = 0
   if (tEndNorm > 0.35 && lEndNorm > 0.25) {
     const cos = (tEnd.x * lEnd.x + tEnd.y * lEnd.y) / (tEndNorm * lEndNorm)
-    if (cos < 0.25) {
-      dirPenalty = (0.25 - cos) * 0.45
+    if (cos < 0.2) {
+      dirPenalty = (0.2 - cos) * 0.22
     }
   }
 
-  // Equation (14): S = 100 * exp(-alpha * D_n) with strict alpha = 2.25
-  const score = 100 * Math.exp(-2.25 * (d + dirPenalty))
+  // Equation (14): S = 100 * exp(-alpha * D_n) with balanced alpha = 1.65
+  const score = 100 * Math.exp(-1.65 * (d + dirPenalty))
   return Math.max(0, Math.min(100, score))
 }
 
@@ -120,7 +120,7 @@ export function scoreDynamicBoth(live: Vec3[], target: Vec3[]): number {
   const windows = [live, live.slice(-20), live.slice(-12)].filter((w) => w.length >= 8)
   let best = 0
   for (const win of windows) {
-    const trace = normalizeTrace(win, 16, 0.065)
+    const trace = normalizeTrace(win, 16, 0.035)
     if (!trace.length) continue
     const mirrored = trace.map(({ x, y, z }) => ({ x: -x, y, z }))
     best = Math.max(best, scoreDynamic(trace, reference), scoreDynamic(mirrored, reference))

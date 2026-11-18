@@ -1,4 +1,15 @@
 import type { PoseTemplate, Vec3 } from './types'
+import calibratedRaw from './fsl105_calibrated.json'
+
+interface CalibratedEntry {
+  angles?: number[]
+  angleKeyframes?: number[][]
+  path?: Vec3[]
+  twoHanded?: boolean
+  zone?: 'forehead' | 'chin' | 'chest'
+}
+
+const calibrated = calibratedRaw as Record<string, CalibratedEntry>
 
 // Joint angle presets matching STATIC_TEMPLATES conventions:
 // [thumbMCP, thumbIP, indexMCP, indexPIP, middleMCP, middlePIP, ringMCP, ringPIP, pinkyMCP, pinkyPIP, wristSpread]
@@ -8,6 +19,7 @@ const B = 55  // Bent / curled into palm
 
 const HAND_OPEN_5 = [S, S, S, S, S, S, S, S, S, S, 72]
 const HAND_FLAT_B = [90, 100, S, S, S, S, S, S, S, S, 65]
+const HAND_FLAT_RELAXED = [145, 155, S, S, S, S, S, S, S, S, 65]
 const HAND_FIST_S = [80, 85, B, B, B, B, B, B, B, B, 52]
 const HAND_THUMBS_UP = [S, S, B, B, B, B, B, B, B, B, 58]
 const HAND_INDEX_1 = [75, 80, S, S, B, B, B, B, B, B, 56]
@@ -45,6 +57,7 @@ interface FslSpec {
   zone: 'forehead' | 'chin' | 'chest'
   angles: number[]
   path: Vec3[]
+  motionLandmark?: number
   hint: string
   desc?: string
 }
@@ -53,14 +66,14 @@ interface FslSpec {
 const FSL_SPECS: FslSpec[] = [
   // Greetings (0-9)
   { id: 'MAGANDANG UMAGA', title: 'Magandang Umaga (Good Morning)', category: 'Greetings', twoHanded: false, zone: 'chest', angles: HAND_OPEN_5, path: PATH_OUT, hint: 'Start with a thumbs-up at chest height, then open your hand outward', desc: 'Starts with a thumbs-up at chest height and opens outward into a spread hand.' },
-  { id: 'GOOD AFTERNOON', title: 'Good Afternoon', category: 'Greetings', twoHanded: false, zone: 'chin', angles: HAND_FLAT_B, path: PATH_OUT, hint: 'Touch near chin, then angle flat hand forward' },
+  { id: 'GOOD AFTERNOON', title: 'Good Afternoon', category: 'Greetings', twoHanded: false, zone: 'chin', angles: HAND_FLAT_RELAXED, path: PATH_UP, motionLandmark: 12, hint: 'Make a thumbs-up at chest height, then bring your flat hand palm-down to your chin' },
   { id: 'GOOD EVENING', title: 'Good Evening', category: 'Greetings', twoHanded: true, zone: 'chest', angles: HAND_FLAT_B, path: PATH_DOWN, hint: 'Start with thumbs-up, then curve dominant hand down over the other' },
   { id: 'HELLO', title: 'Hello', category: 'Greetings', twoHanded: false, zone: 'forehead', angles: HAND_FLAT_B, path: PATH_OUT, hint: 'Touch near temple and salute outward', desc: 'Flat hand touches near the temple and salutes outward.' },
-  { id: 'KAMUSTA', title: 'Kamusta (How Are You)', category: 'Greetings', twoHanded: true, zone: 'chest', angles: HAND_THUMBS_UP, path: PATH_UP, hint: 'Roll both hands at chest height and finish in thumbs-up', desc: 'Both hands meet at the chest, roll outward, and finish in a thumbs-up greeting.' },
+  { id: 'KAMUSTA', title: 'Kamusta (How Are You)', category: 'Greetings', twoHanded: true, zone: 'chest', angles: HAND_CUP, path: PATH_OUT, hint: 'Curl both hands knuckles-together at chest height and roll forward', desc: 'Both curved hands meet knuckles-together at chest height and roll forward/open.' },
   { id: 'IM FINE', title: "I'm Fine", category: 'Greetings', twoHanded: false, zone: 'chest', angles: HAND_OPEN_5, path: PATH_NOD, hint: 'Tap thumb of open spread hand against center of chest' },
   { id: 'NICE TO MEET YOU', title: 'Nice to Meet You', category: 'Greetings', twoHanded: true, zone: 'chest', angles: HAND_FLAT_B, path: PATH_OUT, hint: 'Brush palm across palm, then bring both index fingers together' },
-  { id: 'SALAMAT', title: 'Salamat (Thank You)', category: 'Greetings', twoHanded: true, zone: 'chin', angles: HAND_FLAT_B, path: PATH_DOWN, hint: 'Touch both flat hands to chin and move forward and down', desc: 'Both flat hands touch near the chin and move forward and down together.' },
-  { id: 'YOURE WELCOME', title: "You're Welcome", category: 'Greetings', twoHanded: false, zone: 'chin', angles: HAND_FLAT_B, path: PATH_DOWN, hint: 'Move flat hand from chin sweeping downward toward waist' },
+  { id: 'SALAMAT', title: 'Salamat (Thank You)', category: 'Greetings', twoHanded: true, zone: 'chest', angles: HAND_FLAT_RELAXED, path: PATH_OUT, hint: 'Hold both open hands near upper chest and move forward palms-up', desc: 'Both open hands move forward from the upper chest with palms facing up.' },
+  { id: 'YOURE WELCOME', title: "You're Welcome", category: 'Greetings', twoHanded: false, zone: 'chin', angles: HAND_FLAT_RELAXED, path: PATH_DOWN, hint: 'Move flat hand from chin sweeping downward toward waist' },
   { id: 'SEE YOU TOMORROW', title: 'See You Tomorrow', category: 'Greetings', twoHanded: false, zone: 'chin', angles: HAND_THUMBS_UP, path: PATH_OUT, hint: 'Point near eye, then arc thumbs-up thumb forward from cheek' },
 
   // Survival & Responses (10-19)
@@ -106,7 +119,7 @@ const FSL_SPECS: FslSpec[] = [
 
   // Family (52-61)
   { id: 'TATAY', title: 'Tatay (Father)', category: 'Family', twoHanded: false, zone: 'forehead', angles: HAND_OPEN_5, path: PATH_TAP_FOREHEAD, hint: 'Spread all fingers and tap your thumb against your forehead', desc: 'Thumb of open hand taps against the forehead.' },
-  { id: 'NANAY', title: 'Nanay (Mother)', category: 'Family', twoHanded: false, zone: 'chin', angles: HAND_OPEN_5, path: PATH_TAP_CHIN, hint: 'Spread all fingers and tap your thumb against your chin', desc: 'Thumb of open hand taps against the chin.' },
+  { id: 'NANAY', title: 'Nanay (Mother)', category: 'Family', twoHanded: false, zone: 'chin', angles: HAND_FLAT_RELAXED, path: PATH_TAP_CHIN, hint: 'Hold a flat hand with fingers together and tap thumb to chin', desc: 'Flat hand with fingers together taps thumb against the chin.' },
   { id: 'SON', title: 'Son', category: 'Family', twoHanded: false, zone: 'forehead', angles: HAND_FLAT_B, path: PATH_DOWN, hint: 'Salute from forehead then lower forearm as if cradling' },
   { id: 'DAUGHTER', title: 'Daughter', category: 'Family', twoHanded: true, zone: 'chest', angles: HAND_FLAT_B, path: PATH_DOWN, hint: 'Touch jawline, then fold both forearms in a cradling motion' },
   { id: 'GRANDFATHER', title: 'Grandfather', category: 'Family', twoHanded: false, zone: 'forehead', angles: HAND_OPEN_5, path: PATH_OUT, hint: 'Touch thumb to forehead, then arc forward in two bounces' },
@@ -114,7 +127,7 @@ const FSL_SPECS: FslSpec[] = [
   { id: 'UNCLE', title: 'Uncle', category: 'Family', twoHanded: false, zone: 'forehead', angles: HAND_V_U, path: PATH_CIRCLE, hint: 'Raise two fingers (U) beside forehead and twist gently' },
   { id: 'AUNTIE', title: 'Auntie', category: 'Family', twoHanded: false, zone: 'chin', angles: HAND_THUMBS_UP, path: PATH_CIRCLE, hint: 'Hold closed fist with thumb up (A) beside cheek and twist' },
   { id: 'COUSIN', title: 'Cousin', category: 'Family', twoHanded: false, zone: 'forehead', angles: HAND_CUP, path: PATH_CIRCLE, hint: 'Form a curved C-hand beside temple and shake gently' },
-  { id: 'MAGULANG', title: 'Magulang (Parents)', category: 'Family', twoHanded: false, zone: 'forehead', angles: HAND_OPEN_5, path: PATH_DOWN, hint: 'Touch forehead with open hand then move down to chin', desc: 'Open hand touches the forehead then moves down to the chin.' },
+  { id: 'MAGULANG', title: 'Magulang (Parents)', category: 'Family', twoHanded: false, zone: 'forehead', angles: HAND_V_U, path: PATH_DOWN, hint: 'Extend index and middle fingers together, touch forehead then chin', desc: 'Index and middle fingers touch near the temple then move down to the chin.' },
 
   // People & Relationships (62-71)
   { id: 'BOY', title: 'Boy', category: 'People', twoHanded: false, zone: 'forehead', angles: HAND_CUP, path: PATH_TAP_FOREHEAD, hint: 'Pinch fingers together at the forehead like gripping a cap brim' },
@@ -144,13 +157,13 @@ const FSL_SPECS: FslSpec[] = [
   { id: 'DARK', title: 'Dark', category: 'Colors', twoHanded: true, zone: 'chest', angles: HAND_FLAT_B, path: PATH_SLICE, hint: 'Cross both flat palms smoothly in front of chest and face' },
 
   // Food (85-94)
-  { id: 'TINAPAY', title: 'Tinapay (Bread)', category: 'Food', twoHanded: true, zone: 'chest', angles: HAND_FLAT_B, path: PATH_SLICE, hint: 'Slice flat hand across the back of your other hand', desc: 'One hand slices across the back of the other hand.' },
+  { id: 'TINAPAY', title: 'Tinapay (Bread)', category: 'Food', twoHanded: true, zone: 'chin', angles: HAND_V_U, path: PATH_NOD, hint: 'Hold both hands near mouth with index and middle fingers extended and tap together', desc: 'Both hands hold index and middle fingers extended near the mouth and tap lightly together.' },
   { id: 'EGG', title: 'Egg', category: 'Food', twoHanded: true, zone: 'chest', angles: HAND_CUP, path: PATH_DOWN, hint: 'Tap both hands together at chest, then pull down and apart' },
   { id: 'FISH', title: 'Fish', category: 'Food', twoHanded: false, zone: 'chest', angles: HAND_FLAT_B, path: PATH_OUT, hint: 'Hold flat vertical hand at chest and wiggle forward like a fish' },
   { id: 'MEAT', title: 'Meat', category: 'Food', twoHanded: true, zone: 'chest', angles: HAND_CUP, path: PATH_NOD, hint: 'Pinch the web of your flat non-dominant hand and shake slightly' },
   { id: 'CHICKEN', title: 'Chicken', category: 'Food', twoHanded: false, zone: 'forehead', angles: HAND_CUP, path: PATH_NOD, hint: 'Open and close thumb and index beak beside face, then scratch' },
   { id: 'SPAGHETTI', title: 'Spaghetti', category: 'Food', twoHanded: true, zone: 'chest', angles: HAND_PINKY_I, path: PATH_CIRCLE, hint: 'Extend both pinky fingers and spiral outward like noodles' },
-  { id: 'KANIN', title: 'Kanin (Rice)', category: 'Food', twoHanded: true, zone: 'chin', angles: HAND_CUP, path: PATH_UP, hint: 'Cup one hand and scoop upward toward your mouth', desc: 'One hand cups like a bowl while the other scoops upward to the mouth.' },
+  { id: 'KANIN', title: 'Kanin (Rice)', category: 'Food', twoHanded: true, zone: 'chin', angles: HAND_CUP, path: PATH_UP, hint: 'Hold one palm flat face-up and scoop toward your mouth with the other hand', desc: 'One palm stays flat like a plate while the other hand scoops upward to the mouth.' },
   { id: 'LONGANISA', title: 'Longanisa', category: 'Food', twoHanded: true, zone: 'chest', angles: HAND_CUP, path: PATH_OUT, hint: 'Pinch thumb and index on both hands and pull outward like links' },
   { id: 'SHRIMP', title: 'Shrimp', category: 'Food', twoHanded: false, zone: 'chest', angles: HAND_CUP, path: PATH_OUT, hint: 'Curl index finger and bounce forward twice like a swimming shrimp' },
   { id: 'CRAB', title: 'Crab', category: 'Food', twoHanded: true, zone: 'chest', angles: HAND_CUP, path: PATH_NOD, hint: 'Pinch thumb against index and middle fingers on both hands like claws' },
@@ -161,23 +174,28 @@ const FSL_SPECS: FslSpec[] = [
   { id: 'JUICE', title: 'Juice', category: 'Drinks', twoHanded: true, zone: 'chest', angles: HAND_PINKY_I, path: PATH_DOWN, hint: 'Cup one hand as a glass and trace a J with your pinky inside' },
   { id: 'GATAS', title: 'Gatas (Milk)', category: 'Drinks', twoHanded: false, zone: 'chest', angles: HAND_FIST_S, path: PATH_NOD, hint: 'Squeeze your hand open and closed into a fist at chest height', desc: 'Single hand squeezes open and closed into a fist at chest height.' },
   { id: 'KAPE', title: 'Kape (Coffee)', category: 'Drinks', twoHanded: true, zone: 'chest', angles: HAND_FIST_S, path: PATH_CIRCLE, hint: 'Stack two fists and circle the top fist', desc: 'Two fists stacked together with the top fist grinding in a circle.' },
-  { id: 'TEA', title: 'Tea', category: 'Drinks', twoHanded: false, zone: 'forehead', angles: HAND_F, path: PATH_DOWN, hint: 'Pinch thumb and index (F) and dip down twice like a teabag' },
+  { id: 'TEA', title: 'Tea', category: 'Drinks', twoHanded: true, zone: 'chest', angles: HAND_F, path: PATH_DOWN, hint: 'Form an O-cup with one hand and dip an F-hand into it like a teabag' },
   { id: 'BEER', title: 'Beer', category: 'Drinks', twoHanded: false, zone: 'chin', angles: HAND_FLAT_B, path: PATH_DOWN, hint: 'Stroke side of upright flat hand downward along your cheek' },
   { id: 'WINE', title: 'Wine', category: 'Drinks', twoHanded: false, zone: 'chin', angles: HAND_W, path: PATH_CIRCLE, hint: 'Hold three fingers (W) beside your cheek and circle smoothly' },
   { id: 'SUGAR', title: 'Sugar', category: 'Drinks', twoHanded: false, zone: 'chin', angles: HAND_V_U, path: PATH_DOWN, hint: 'Brush two extended fingers downward from your chin' },
   { id: 'NO SUGAR', title: 'No Sugar', category: 'Drinks', twoHanded: false, zone: 'chin', angles: HAND_HINDI, path: PATH_DOWN, hint: 'Pinch fingers for No, then brush two fingers down chin for Sugar' },
 ]
 
-export const FSL_TEMPLATES: PoseTemplate[] = FSL_SPECS.map((item) => ({
-  id: item.id,
-  kind: 'dynamic',
-  lang: 'FSL',
-  twoHanded: item.twoHanded,
-  zone: item.zone,
-  angles: item.angles,
-  path: item.path,
-  hint: item.hint,
-}))
+export const FSL_TEMPLATES: PoseTemplate[] = FSL_SPECS.map((item) => {
+  const cal = calibrated[item.id]
+  return {
+    id: item.id,
+    kind: 'dynamic',
+    lang: 'FSL',
+    twoHanded: cal?.twoHanded ?? item.twoHanded,
+    zone: cal?.zone ?? item.zone,
+    angles: cal?.angles ?? item.angles,
+    angleKeyframes: cal?.angleKeyframes,
+    path: cal?.path ?? item.path,
+    motionLandmark: item.motionLandmark,
+    hint: item.hint,
+  }
+})
 
 export const FSL_DEFINITIONS: Record<string, { title: string; sub: string; desc: string }> = Object.fromEntries(
   FSL_SPECS.map((item) => [

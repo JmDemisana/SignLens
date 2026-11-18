@@ -90,9 +90,11 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
     let intervalStart = performance.now()
     let frames = 0
     let tracking = false
+    let lastTwoHandsAt = -Infinity
 
     const clear = () => {
       lastScoreAt.current = -Infinity
+      lastTwoHandsAt = -Infinity
       setDetail(null)
       setLandmarks(null)
       setSecondLandmarks(null)
@@ -159,61 +161,59 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
         const s2 = lm2 ? scoreStatic(fingerAngles(lm2, aspect), targetAngles) : { score: -1, perJoint: [] }
         const best = s2.score > s1.score ? s2 : s1
         lastScoreAt.current = t
-        setDetail({ id: targetId, score: best.score, perJoint: best.perJoint, passed: best.score >= 85 })
+        setDetail({ id: targetId, score: best.score, perJoint: best.perJoint, passed: best.score >= 78 })
       } else if (template.kind === 'dynamic' && template.path) {
-        // 1. Enforce exact hand count (2-handed vs 1-handed) matching the FSL-105 video
-        if (template.twoHanded && !lm2) {
-          lastScoreAt.current = t
-          setDetail({ id: targetId, score: 45, perJoint: [], passed: false })
-          return
-        }
-        if (template.twoHanded === false && lm2 && palmCenter(lm2).y < 0.78) {
-          lastScoreAt.current = t
-          setDetail({ id: targetId, score: 49, perJoint: [], passed: false })
-          return
+        // 1. Track hand count (soft penalty instead of 45%/49% hard lock when an occluded hand drops)
+        if (lm2) lastTwoHandsAt = t
+        let handCountPenalty = 0
+        if (template.twoHanded && !lm2 && t - lastTwoHandsAt > 1500) {
+          handCountPenalty = 12
+        } else if (template.twoHanded === false && lm2 && palmCenter(lm2).y < 0.78) {
+          handCountPenalty = 10
         }
 
-        // 2. Enforce spatial height zone (forehead vs chin vs chest) calibrated to FSL-105 signer framing
-        const palmY = palmCenter(lm).y
-        if (template.zone === 'forehead' && palmY > 0.58) {
+        // 2. Enforce spatial height zone (forehead vs chin vs chest) with laptop-webcam tolerance
+        const palmY = lm2 ? Math.min(palmCenter(lm).y, palmCenter(lm2).y) : palmCenter(lm).y
+        if (template.zone === 'forehead' && palmY > 0.70) {
           lastScoreAt.current = t
           setDetail({ id: targetId, score: 52, perJoint: [], passed: false })
           return
         }
-        if (template.zone === 'chin' && (palmY < 0.24 || palmY > 0.75)) {
+        if (template.zone === 'chin' && (palmY < 0.18 || palmY > 0.88)) {
           lastScoreAt.current = t
           setDetail({ id: targetId, score: 54, perJoint: [], passed: false })
           return
         }
-        if (template.zone === 'chest' && (palmY < 0.34 || palmY > 0.88)) {
+        if (template.zone === 'chest' && (palmY < 0.28 || palmY > 0.96)) {
           lastScoreAt.current = t
           setDetail({ id: targetId, score: 55, perJoint: [], passed: false })
           return
         }
 
-        // 3. Evaluate finger handshape strictly (must reach >= 78%, and for 2-handed signs both hands must match)
+        // 3. Evaluate finger handshape (use best-matching hand & keyframe so compound/asymmetric signs work)
         let handshapeScore = 82
         let perJoint: number[] = []
-        if (template.angles && template.angles.length === 11) {
-          const st1 = scoreStatic(live, template.angles)
-          const st2 = lm2 ? scoreStatic(fingerAngles(lm2, aspect), template.angles) : { score: -1, perJoint: [] }
-          if (template.twoHanded && lm2) {
-            handshapeScore = (st1.score + st2.score) / 2
-            perJoint = st1.score <= st2.score ? st1.perJoint : st2.perJoint
-            if (Math.min(st1.score, st2.score) < 70 || handshapeScore < 78) {
-              lastScoreAt.current = t
-              setDetail({ id: targetId, score: handshapeScore * 0.82, perJoint, passed: false })
-              return
+        const keyShapes = [
+          ...(template.angles && template.angles.length === 11 ? [template.angles] : []),
+          ...(template.angleKeyframes ?? []).filter((k) => k.length === 11),
+        ]
+        if (keyShapes.length > 0) {
+          const live2 = lm2 ? fingerAngles(lm2, aspect) : null
+          let bestSt = { score: -1, perJoint: [] as number[] }
+          for (const shape of keyShapes) {
+            const st1 = scoreStatic(live, shape)
+            if (st1.score > bestSt.score) bestSt = st1
+            if (live2) {
+              const st2 = scoreStatic(live2, shape)
+              if (st2.score > bestSt.score) bestSt = st2
             }
-          } else {
-            const bestSt = st2.score > st1.score ? st2 : st1
-            handshapeScore = bestSt.score
-            perJoint = bestSt.perJoint
-            if (handshapeScore < 78) {
-              lastScoreAt.current = t
-              setDetail({ id: targetId, score: handshapeScore * 0.82, perJoint, passed: false })
-              return
-            }
+          }
+          handshapeScore = bestSt.score
+          perJoint = bestSt.perJoint
+          if (handshapeScore < 55) {
+            lastScoreAt.current = t
+            setDetail({ id: targetId, score: handshapeScore * 0.85, perJoint, passed: false })
+            return
           }
         }
 
@@ -229,9 +229,9 @@ export function useSignCheck(videoRef: React.RefObject<HTMLVideoElement | null>,
         const dtwA = traceA ? scoreDynamicBoth(traceA, template.path) : 0
         const dtwB = traceB ? scoreDynamicBoth(traceB, template.path) : 0
         const dtwScore = Math.max(dtwA, dtwB)
-        const finalScore = Math.min(100, dtwScore * 0.6 + handshapeScore * 0.4)
+        const finalScore = Math.max(0, Math.min(100, dtwScore * 0.6 + handshapeScore * 0.4 - handCountPenalty))
         lastScoreAt.current = t
-        setDetail({ id: targetId, score: finalScore, perJoint, passed: finalScore >= 82 && dtwScore >= 78 && handshapeScore >= 78 })
+        setDetail({ id: targetId, score: finalScore, perJoint, passed: finalScore >= 70 && dtwScore >= 66 && handshapeScore >= 58 })
       }
     }
 
