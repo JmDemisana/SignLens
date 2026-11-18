@@ -16,6 +16,9 @@ export interface PoseTemplate {
   angles?: number[]
   // Dynamic: reference palm-center path, normalized 0..1
   path?: Vec3[]
+  motionLandmark?: number
+  twoHanded?: boolean
+  zone?: 'forehead' | 'chin' | 'chest'
   hint: string
   lang: SignLang | 'BOTH' // BOTH = shared manual alphabet and numbers
 }
@@ -30,6 +33,8 @@ export interface ScoreDetail {
 export interface LessonItem {
   id: string
   label: string
+  signs?: string[]
+  context?: string
 }
 
 export interface LessonState {

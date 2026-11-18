@@ -1,4 +1,5 @@
-import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision'
+import { PoseLandmarker } from '@mediapipe/tasks-vision'
+import { visionFiles } from './visionFiles'
 import type { Vec3 } from './types'
 
 export interface BodyFrame {
@@ -23,18 +24,33 @@ function loadPose(): Promise<PoseLandmarker | null> {
   if (loading) return loading
   loading = (async () => {
     try {
-      const vision = await FilesetResolver.forVisionTasks('/wasm')
-      landmarker = await PoseLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: '/models/pose_landmarker_lite.task',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        numPoses: 1,
-        minPoseDetectionConfidence: 0.4,
-        minPosePresenceConfidence: 0.4,
-        minTrackingConfidence: 0.4,
-      })
+      const vision = await visionFiles()
+      try {
+        landmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: `${import.meta.env.BASE_URL}models/pose_landmarker_lite.task`,
+            delegate: 'GPU',
+          },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.4,
+          minPosePresenceConfidence: 0.4,
+          minTrackingConfidence: 0.4,
+        })
+      } catch (gpuErr) {
+        console.warn('PoseLandmarker GPU delegate failed, falling back to CPU:', gpuErr)
+        landmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: `${import.meta.env.BASE_URL}models/pose_landmarker_lite.task`,
+            delegate: 'CPU',
+          },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.4,
+          minPosePresenceConfidence: 0.4,
+          minTrackingConfidence: 0.4,
+        })
+      }
       return landmarker
     } catch (e) {
       console.warn('PoseLandmarker unavailable, hand-only mode:', e)
@@ -52,12 +68,12 @@ export async function sampleBody(video: HTMLVideoElement): Promise<BodyFrame | n
     if (video.readyState < 2 || video.videoWidth === 0) return getBodyFrame()
     const res = lm.detectForVideo(video, performance.now())
     const pts = res?.landmarks?.[0]
-    if (!pts || pts.length < 25) return latest
+    if (!pts || pts.length < 25) return getBodyFrame()
     const nose = { x: pts[0].x, y: pts[0].y, z: pts[0].z ?? 0 }
     const ls = pts[11]
     const rs = pts[12]
     const w = Math.hypot(ls.x - rs.x, ls.y - rs.y)
-    if (w < 0.05) return latest // body too far or cropped, keep last good frame
+    if (w < 0.05) return getBodyFrame()
     latest = { nose, shoulderWidth: w, at: performance.now() }
     return latest
   } catch {
@@ -68,8 +84,7 @@ export async function sampleBody(video: HTMLVideoElement): Promise<BodyFrame | n
 // Express a hand point relative to the nose, scaled by shoulder width.
 // Falls back to raw camera coords when no body is visible so static
 // letters keep working with the camera alone.
-export function normalizePoint(p: Vec3): Vec3 {
-  const b = getBodyFrame()
+export function normalizePoint(p: Vec3, b = getBodyFrame()): Vec3 {
   if (!b || b.shoulderWidth <= 0) return { x: p.x, y: p.y, z: p.z || 0 }
   return {
     x: (p.x - b.nose.x) / b.shoulderWidth,

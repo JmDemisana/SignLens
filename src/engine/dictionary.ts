@@ -1,7 +1,9 @@
 import { fingerAngles, scoreStatic } from './angles'
-import { STATIC_TEMPLATES } from './templates'
+import { scoreDynamicBoth } from './dtw'
+import { STATIC_TEMPLATES, templatesForLang } from './templates'
 import { getPersonalAngles } from './personal'
-import type { HandLandmarks, SignLang } from './types'
+import { FSL_DEFINITIONS } from './fsl'
+import type { HandLandmarks, SignLang, Vec3 } from './types'
 
 export interface DictResult {
   id: string
@@ -9,75 +11,84 @@ export interface DictResult {
   hint: string
 }
 
-export function lookupTop3(lm: HandLandmarks | null, lang: SignLang = 'ASL'): DictResult[] {
+// Bidirectional Sign-to-Word Optical Lookup (Objective 1f & Protocol 3).
+// Evaluates both static joint-angle templates and dynamic FastDTW motion templates
+// against the live hand landmarks and optional captured motion trace.
+export function lookupTop3(
+  lm: HandLandmarks | null,
+  lang: SignLang = 'FSL',
+  aspect = 1,
+  motionTrace?: Vec3[] | null,
+): DictResult[] {
   if (!lm || lm.length < 21) return []
-  const live = fingerAngles(lm)
-  return STATIC_TEMPLATES.filter((t) => t.angles && (t.lang === 'BOTH' || t.lang === lang))
-    .map((t) => {
-      const target = getPersonalAngles(t.id) ?? t.angles!
+  const live = fingerAngles(lm, aspect)
+  const candidates: DictResult[] = []
+
+  for (const t of templatesForLang(lang)) {
+    if (t.kind === 'static' && t.angles) {
+      const target = getPersonalAngles(t.id) ?? t.angles
       const { score } = scoreStatic(live, target)
-      return { id: t.id, score, hint: t.hint }
-    })
+      candidates.push({ id: t.id, score, hint: t.hint })
+    } else if (t.kind === 'dynamic' && t.path && motionTrace && motionTrace.length >= 6) {
+      const dtwScore = scoreDynamicBoth(motionTrace, t.path)
+      const angleBonus = t.angles ? scoreStatic(live, t.angles).score * 0.35 + dtwScore * 0.65 : dtwScore
+      candidates.push({ id: t.id, score: angleBonus, hint: t.hint })
+    }
+  }
+
+  return candidates
     .sort((a, b) => b.score - a.score)
     .slice(0, 3)
 }
 
-export function lookupStatic(lm: HandLandmarks | null, lang: SignLang = 'ASL'): DictResult | null {
+export function lookupStatic(lm: HandLandmarks | null, lang: SignLang = 'FSL'): DictResult | null {
   const top = lookupTop3(lm, lang)
   return top[0] ?? null
 }
 
 export const DEFINITIONS: Record<string, { title: string; sub: string; desc: string }> = {
-  HELLO: { title: 'Hello', sub: 'Greeting', desc: 'Palm forward, move hand outward from forehead.' },
-  'THANK YOU': { title: 'Thank You', sub: '/θæŋk juː/ • Courtesy', desc: 'Fingertips at chin, move hand forward and down.' },
-  YES: { title: 'Yes', sub: 'Affirmation', desc: 'Fist nods up and down like a head nod.' },
-  NO: { title: 'No', sub: 'Negation', desc: 'Index and middle tap, move side to side.' },
-  PLEASE: { title: 'Please', sub: 'Courtesy', desc: 'Flat palm circles on the chest.' },
-  SORRY: { title: 'Sorry', sub: 'Apology', desc: 'Fist circles on the chest with a sincere face.' },
-  GOOD: { title: 'Good', sub: 'Positive', desc: 'Fingertips at chin, hand opens outward.' },
-  MORNING: { title: 'Morning', sub: 'Time of day', desc: 'Hand rises off the opposite arm like a sunrise.' },
-  FRIEND: { title: 'Friend', sub: 'Person', desc: 'Index fingers hook then swap sides.' },
-  LOVE: { title: 'Love', sub: 'Emotion', desc: 'Arms cross over the heart.' },
+  ...FSL_DEFINITIONS,
 }
 
 export function definitionFor(id: string): { title: string; sub: string; desc: string } {
+  if (FSL_DEFINITIONS[id]) return FSL_DEFINITIONS[id]
   if (DEFINITIONS[id]) return DEFINITIONS[id]
-  if (/^[A-Z]$/.test(id)) return { title: `Letter ${id}`, sub: 'ASL Alphabet', desc: 'Fingerspelling posture. Match the ghost guide and hold steady.' }
-  if (/^[0-9]$/.test(id)) return { title: `Number ${id}`, sub: 'ASL Number', desc: 'Number hand shape. Keep wrist level and hold steady.' }
-  return { title: id, sub: 'Sign', desc: 'Practice sign.' }
+  if (/^[A-Z]$/.test(id)) return { title: `Letter ${id}`, sub: 'FSL Manual Alphabet', desc: STATIC_TEMPLATES.find((template) => template.id === id)?.hint ?? 'Copy the motion shown in the reference.' }
+  if (/^[0-9]$/.test(id)) return { title: `Digit ${id}`, sub: 'FSL Number', desc: STATIC_TEMPLATES.find((template) => template.id === id)?.hint ?? 'Hold the handshape steady.' }
+  return { title: id, sub: 'FSL Sign', desc: 'Filipino Sign Language sign.' }
 }
 
-// Step-by-step formation guides for moving words. Static letters and
-// numbers use the generic fingerspelling guide below.
 export const HOW_TO: Record<string, { start: string; motion: string; cue: string }> = {
-  HELLO: { start: 'Flat hand at your forehead, palm forward.', motion: 'Move the hand outward and away from the head.', cue: 'Smile, direct eye contact, friendly face.' },
-  'THANK YOU': { start: 'Touch fingertips of a flat hand to your lips or chin.', motion: 'Move the hand gently downward and outward toward the listener.', cue: 'Maintain an appreciative smile and direct eye contact.' },
-  YES: { start: 'Make a fist at chest height.', motion: 'Nod the fist up and down twice like a head nod.', cue: 'Firm small nods read as confident yes.' },
-  NO: { start: 'Index and middle fingers together, thumb tapping them.', motion: 'Move the hand side to side in small taps.', cue: 'Keep the motion tight, not a big wave.' },
-  PLEASE: { start: 'Flat palm centered on the chest.', motion: 'Circle the palm clockwise on the chest.', cue: 'Warm expression, slight head bow.' },
-  SORRY: { start: 'Fist centered on the chest.', motion: 'Circle the fist slowly on the chest.', cue: 'Sincere regretful face sells the sign.' },
-  GOOD: { start: 'Fingertips touching the chin, hand flat.', motion: 'Open the hand outward and away from the chin.', cue: 'Bright approving face.' },
-  MORNING: { start: 'Non-dominant forearm horizontal, dominant hand tucked under it.', motion: 'Raise the dominant hand up past the arm like a sunrise.', cue: 'Eyes follow the rising hand.' },
-  FRIEND: { start: 'Both index fingers up, facing each other.', motion: 'Hook the fingers then swap sides past each other.', cue: 'Two-handed sign, practice slowly first.' },
-  LOVE: { start: 'Arms crossed over the heart.', motion: 'Squeeze gently inward over the heart.', cue: 'Soft sincere expression.' },
-  KAMUSTA: { start: 'Open palm at the chest.', motion: 'Move the palm outward toward the person.', cue: 'Warm greeting face, eye contact.' },
-  SALAMAT: { start: 'Fingertips at the chin.', motion: 'Bow the hand forward and down.', cue: 'Grateful expression with a slight nod.' },
-  OO: { start: 'Fist at chest height.', motion: 'Nod the fist down twice, firmly.', cue: 'Short firm nods.' },
-  HINDI: { start: 'Flat hand up at chest height.', motion: 'Wave the hand side to side gently.', cue: 'Calm neutral face.' },
-  MABUHAY: { start: 'Open palm low at the chest.', motion: 'Raise the palm high overhead in welcome.', cue: 'Big celebratory welcome face.' },
-  KAIBIGAN: { start: 'Index fingers facing each other.', motion: 'Meet the fingertips then part them sideways.', cue: 'Friendly smile.' },
+  KAMUSTA: { start: 'Hold both hands at chest height.', motion: 'Roll both hands outward into thumbs-up.', cue: 'Keep both hands clearly visible.' },
+  'MAGANDANG UMAGA': { start: 'Start with a thumbs-up at chest height.', motion: 'Open your hand outward into a spread hand.', cue: 'Smooth one-handed motion.' },
+  HELLO: { start: 'Place a flat hand near your temple.', motion: 'Salute outward from your forehead.', cue: 'Keep fingers together.' },
+  SALAMAT: { start: 'Hold both flat hands near your chin.', motion: 'Move both hands forward and downward.', cue: 'Use both hands together.' },
+  OO: { start: 'Make a closed fist at chest height.', motion: 'Nod your wrist up and down.', cue: 'Keep your fist closed.' },
+  HINDI: { start: 'Raise index, middle, and thumb.', motion: 'Snap index and middle fingers onto your thumb.', cue: 'One quick closing tap.' },
+  TAMA: { start: 'Point both index fingers forward.', motion: 'Strike the top index finger down onto the lower one.', cue: 'Use both index fingers.' },
+  MALI: { start: 'Extend your thumb and pinky finger.', motion: 'Tap your chin gently.', cue: 'Keep middle three fingers folded.' },
+  NAIINTINDIHAN: { start: 'Close fist beside your temple.', motion: 'Flick your index finger straight up.', cue: 'Stay near forehead height.' },
+  MABAGAL: { start: 'Hold one palm flat in front of chest.', motion: 'Slide your other palm slowly up its back.', cue: 'Slow, steady movement.' },
+  NANAY: { start: 'Open all five fingers.', motion: 'Tap your thumb against your chin.', cue: 'Keep fingers spread.' },
+  TATAY: { start: 'Open all five fingers.', motion: 'Tap your thumb against your forehead.', cue: 'Keep fingers spread.' },
+  MAGULANG: { start: 'Open all five fingers.', motion: 'Touch forehead first, then move down to chin.', cue: 'One continuous downward tap.' },
+  BINGI: { start: 'Point your index finger.', motion: 'Touch near your ear, then arc to your mouth.', cue: 'Keep other fingers curled.' },
+  KANIN: { start: 'Cup one hand like a bowl.', motion: 'Scoop curved fingers upward to your mouth.', cue: 'Use both hands.' },
+  TINAPAY: { start: 'Hold one hand vertically.', motion: 'Slice across the back of it with your other hand.', cue: 'Use both hands.' },
+  KAPE: { start: 'Stack two closed fists.', motion: 'Circle the top fist over the bottom fist.', cue: 'Keep both fists closed.' },
+  GATAS: { start: 'Hold one hand at chest height.', motion: 'Squeeze your hand open and closed into a fist.', cue: 'Repeat the squeeze clearly.' },
 }
 
 export function howToFor(id: string): { start: string; motion: string; cue: string } {
   if (HOW_TO[id]) return HOW_TO[id]
   if (/^[A-Z0-9]$/.test(id)) {
     return {
-      start: `Form the '${id}' handshape in front of your chest.`,
-      motion: 'Hold the shape perfectly still for the 2 second timer.',
-      cue: 'Keep the wrist straight and fingers crisp, no rushing.',
+      start: `Form '${id}' in front of your chest.`,
+      motion: 'Hold the handshape steady.',
+      cue: 'Keep your fingers clearly visible.',
     }
   }
-  return { start: 'Watch the 3D demo for the start posture.', motion: 'Copy the full motion shown on the demo.', cue: 'Mirror the demo speed, then build up.' }
+  return { start: 'Watch the video and follow the hand shape and motion.', motion: 'Move at a natural pace.', cue: 'Keep hands clearly visible.' }
 }
 
 export function relatedFor(id: string, lang: SignLang, all: { id: string }[]): string[] {
@@ -91,12 +102,17 @@ export function relatedFor(id: string, lang: SignLang, all: { id: string }[]): s
 
 export function speak(text: string, rate = 1) {
   try {
-    if (!('speechSynthesis' in window)) return
+    if (!('speechSynthesis' in window)) return false
+    const voices = window.speechSynthesis.getVoices()
+    const voice = voices.find((c) => c.localService && (c.lang.startsWith('fil') || c.lang.startsWith('tl') || c.lang.startsWith('en'))) ?? voices[0]
+    if (!voice) return false
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
+    u.voice = voice
     u.rate = rate
     window.speechSynthesis.speak(u)
+    return true
   } catch {
-    // offline TTS unavailable, stay silent
+    return false
   }
 }

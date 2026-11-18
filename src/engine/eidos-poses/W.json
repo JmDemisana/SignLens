@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "pinky": [
+    0.785,
+    2.007,
+    0
+  ],
+  "ring": [
+    0.052,
+    0,
+    0
+  ],
+  "middle": [
+    0,
+    0,
+    0
+  ],
+  "index": [
+    0.105,
+    0,
+    0
+  ],
+  "thumb": [
+    1.745,
+    0.611
+  ],
+  "spread": {
+    "index": -0.25,
+    "middle": 0,
+    "ring": 0.2,
+    "pinky": 0.349,
+    "thumb": -1.396
+  },
+  "rotate": {
+    "thumb": -0.436,
+    "index": 0,
+    "middle": 0,
+    "ring": 0,
+    "pinky": 0.349
+  },
+  "wrist": {
+    "turn": -0.262,
+    "tilt": 0.262,
+    "twist": 0.262
+  }
+}

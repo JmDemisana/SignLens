@@ -1,224 +1,212 @@
 import { useEffect, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from 'lucide-react'
 import * as THREE from 'three'
-import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import type { HandLandmarks, Vec3 } from '../engine/types'
-import { indexRig, poseRig, type Rig } from '../engine/retarget'
-import { loadHandGLB, frameModel, snapshotHand } from '../engine/handGLB'
+import { toV } from '../engine/handGLB'
+import { hasSculptedPose, makeSculptedHand } from '../engine/sculptedHand'
+import { HandDiagram } from './HandDiagram'
 
-// Prerendered snapshot first, live 3D only when the learner grabs it.
-// Kills the multi-engine lag: zero WebGL contexts until touched.
 export default function HandModel({
   pose,
   path,
   animate = false,
   flip = false,
-  height = 260,
+  height = 244,
+  sign = 'the sign',
 }: {
   pose: HandLandmarks
   path?: Vec3[]
   animate?: boolean
   flip?: boolean
   height?: number
+  sign?: string
 }) {
-  const mountRef = useRef<HTMLDivElement | null>(null)
-  const rigRef = useRef<Rig | null>(null)
-  const liveRef = useRef(false)
-  const [status, setStatus] = useState<'snap' | 'live' | 'error'>('snap')
-  const [img, setImg] = useState<string | null>(null)
-  const poseKey = JSON.stringify({
-    p: pose.map((v) => [Math.round(v.x * 500), Math.round(v.y * 500), Math.round((v.z || 0) * 500)]),
-    flip,
-  })
+  const hasMotion = animate && !!path && path.length > 1
+  const mountRef = useRef<HTMLDivElement>(null)
+  const controls = useRef<{ turn: (direction: number) => void; play: (value: boolean) => void } | null>(null)
+  const [view, setView] = useState<'loading' | 'ready' | 'diagram'>('loading')
+  const [playing, setPlaying] = useState(false)
 
-  // Snapshot any time the demonstrated sign changes.
   useEffect(() => {
-    let alive = true
-    const w = mountRef.current?.clientWidth || 300
-    snapshotHand(pose, flip, w, Math.round(height))
-      .then((url) => alive && setImg(url))
-      .catch(() => alive && setStatus('error'))
-    return () => {
-      alive = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poseKey, height])
-
-  // Spin up the live scene on first grab.
-  const goLive = () => {
-    if (liveRef.current || status === 'error') return
     const mount = mountRef.current
     if (!mount) return
-    liveRef.current = true
-    let alive = true
-    const w = mount.clientWidth || 300
-    const h = height
+    if (!hasSculptedPose(sign)) {
+      queueMicrotask(() => setView('diagram'))
+      return
+    }
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-    renderer.setSize(w, h)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
-    renderer.domElement.style.width = '100%'
-    renderer.domElement.style.height = `${h}px`
-    mount.appendChild(renderer.domElement)
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true })
+    } catch {
+      queueMicrotask(() => setView('diagram'))
+      return
+    }
 
+    let active = true
+    let frame = 0
+    let animateMotion = false
+    let playbackStart = 0
+    let fit = 1
     const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(38, w / h, 0.1, 100)
-    camera.position.set(0, 0.05, 2.6)
-    camera.lookAt(0, 0, 0)
+    const position = new THREE.Group()
+    const orbit = new THREE.Group()
+    const hand = new THREE.Group()
+    scene.add(orbit)
+    orbit.add(position)
+    position.add(hand)
+    hand.scale.x = flip ? -1 : 1
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 20)
+    camera.position.z = 7
+    scene.add(new THREE.HemisphereLight(0xffede1, 0x889eb8, 2))
+    const light = new THREE.DirectionalLight(0xfff2d9, 2.3)
+    light.position.set(-2, 4, 5)
+    scene.add(light)
+    const edge = new THREE.DirectionalLight(0x6eded4, 1.3)
+    edge.position.set(3, 0, -4)
+    scene.add(edge)
 
-    scene.add(new THREE.HemisphereLight(0xfff4e6, 0x1a2530, 1.1))
-    const key = new THREE.DirectionalLight(0xffffff, 1.5)
-    key.position.set(1.5, 2, 2.5)
-    scene.add(key)
-    const fill = new THREE.DirectionalLight(0xffe2c4, 0.5)
-    fill.position.set(-1, -0.5, 2)
-    scene.add(fill)
-
-    const root = new THREE.Group()
-    scene.add(root)
-    const holder = new THREE.Group()
-    root.add(holder)
-
-    loadHandGLB().then((src) => {
-      if (!alive) return
-      const model = skeletonClone(src)
-      frameModel(model)
-      holder.add(model)
-      rigRef.current = indexRig(model)
-      try {
-        poseRig(rigRef.current, poseRef.current, flipRef.current)
-      } catch (e) {
-        console.warn('pose failed', e)
-      }
-      setStatus('live')
-    })
-
-    if (path && path.length >= 2) {
-      const g = new THREE.BufferGeometry().setFromPoints(
-        path.map((p) => new THREE.Vector3((p.x - 0.5) * 2.2, (0.5 - p.y) * 2.2, 0)),
-      )
-      holder.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x1cb0f6 })))
-    }
-
-    let rotX = 0.12
-    let rotY = 0
-    let dragging = false
-    let px = 0
-    let py = 0
-    let lastMove = Date.now()
-    const down = (e: PointerEvent) => {
-      dragging = true
-      px = e.clientX
-      py = e.clientY
-      mount.setPointerCapture(e.pointerId)
-    }
-    const move = (e: PointerEvent) => {
-      if (!dragging) return
-      rotY += (e.clientX - px) * 0.01
-      rotX += (e.clientY - py) * 0.01
-      rotX = Math.max(-1.2, Math.min(1.2, rotX))
-      px = e.clientX
-      py = e.clientY
-      lastMove = Date.now()
-    }
-    const end = () => {
-      dragging = false
-    }
-    mount.addEventListener('pointerdown', down)
-    mount.addEventListener('pointermove', move)
-    mount.addEventListener('pointerup', end)
-    mount.addEventListener('pointercancel', end)
-
-    let raf = 0
-    const start = performance.now()
-    const loop = () => {
-      if (!alive) return
-      // Dead when the tab hides or the demo scrolls away.
-      if (document.hidden) {
-        raf = requestAnimationFrame(loop)
-        return
-      }
-      const r = mount.getBoundingClientRect()
-      if (r.bottom < 0 || r.top > window.innerHeight) {
-        raf = requestAnimationFrame(loop)
-        return
-      }
-      raf = requestAnimationFrame(loop)
-      if (!dragging && Date.now() - lastMove > 5000) rotY += 0.002
-      root.rotation.set(rotX, rotY, 0)
-      if (animate && path && path.length >= 2) {
-        const t = ((performance.now() - start) / 2600) % 2
-        const tri = t < 1 ? t : 2 - t
-        const fi = tri * (path.length - 1)
-        const i0 = Math.floor(fi)
-        const i1 = Math.min(path.length - 1, i0 + 1)
-        const fr = fi - i0
-        holder.position.set(
-          (path[i0].x + (path[i1].x - path[i0].x) * fr - path[0].x) * 2.2,
-          -((path[i0].y + (path[i1].y - path[i0].y) * fr - path[0].y) * 2.2),
-          0,
-        )
+    const material = new THREE.MeshStandardMaterial({ color: 0xd8a986, roughness: 0.83 })
+    const move = new THREE.Vector3()
+    const origin = path?.[0] ? toV(path[0]) : move
+    const trace = hasMotion && path ? path.map((point) => {
+      const p = toV(point).sub(origin)
+      p.x *= flip ? -1 : 1
+      return p
+    }) : []
+    let guide: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial> | undefined
+    let yaw = (flip ? 1 : -1) * 0.25
+    let tilt = -0.05
+    let dragPoint: { x: number; y: number } | null = null
+    const render = (time = performance.now()) => {
+      if (!active || document.hidden) return
+      orbit.rotation.set(tilt, yaw, 0)
+      if (animateMotion && trace.length) {
+        // Play in the signing direction, then pause briefly before restarting.
+        const segment = Math.min(1, ((time - playbackStart) % 2650) / 1900) * (trace.length - 1)
+        const index = Math.floor(segment)
+        position.position.copy(move.copy(trace[index]).lerp(trace[Math.min(index + 1, trace.length - 1)], segment - index))
       }
       renderer.render(scene, camera)
     }
-    loop()
-
-    const onResize = () => {
-      const nw = mount.clientWidth || 300
-      renderer.setSize(nw, h)
-      camera.aspect = nw / h
+    const loop = (time: number) => {
+      render(time)
+      if (animateMotion) frame = requestAnimationFrame(loop)
+    }
+    const resize = () => {
+      const width = Math.max(1, mount.clientWidth)
+      const viewHeight = Math.max(1, mount.clientHeight)
+      const aspect = width / viewHeight
+      renderer.setSize(width, viewHeight, false)
+      camera.top = fit / Math.min(1, aspect)
+      camera.bottom = -camera.top
+      camera.right = camera.top * aspect
+      camera.left = -camera.right
       camera.updateProjectionMatrix()
+      render()
     }
-    window.addEventListener('resize', onResize)
-    return () => {
-      alive = false
-      cancelAnimationFrame(raf)
-      window.removeEventListener('resize', onResize)
-      mount.removeEventListener('pointerdown', down)
-      mount.removeEventListener('pointermove', move)
-      mount.removeEventListener('pointerup', end)
-      mount.removeEventListener('pointercancel', end)
-      rigRef.current = null
-      renderer.dispose()
-      if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
+    const observer = new ResizeObserver(resize)
+    observer.observe(mount)
+
+    controls.current = {
+      turn(direction) {
+        yaw = direction ? yaw + direction * Math.PI / 6 : (flip ? 1 : -1) * 0.25
+        if (!direction) tilt = -0.05
+        render()
+      },
+      play(value) {
+        animateMotion = value
+        cancelAnimationFrame(frame)
+        if (value) {
+          playbackStart = performance.now()
+          frame = requestAnimationFrame(loop)
+        }
+      },
     }
-  }
 
-  const poseRef = useRef(pose)
-  poseRef.current = pose
-  const flipRef = useRef(flip)
-  flipRef.current = flip
+    const onDown = (event: PointerEvent) => {
+      if (event.button !== 0) return
+      dragPoint = { x: event.clientX, y: event.clientY }
+      mount.setPointerCapture(event.pointerId)
+    }
+    const onMove = (event: PointerEvent) => {
+      if (!dragPoint) return
+      yaw += (event.clientX - dragPoint.x) * 0.013
+      tilt = THREE.MathUtils.clamp(tilt + (event.clientY - dragPoint.y) * 0.012, -1.1, 1.1)
+      dragPoint = { x: event.clientX, y: event.clientY }
+      render()
+    }
+    const onUp = () => { dragPoint = null }
+    const onLoss = () => setView('diagram')
+    mount.addEventListener('pointerdown', onDown)
+    mount.addEventListener('pointermove', onMove)
+    mount.addEventListener('lostpointercapture', onUp)
+    renderer.domElement.addEventListener('webglcontextlost', onLoss)
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+    renderer.domElement.setAttribute('aria-hidden', 'true')
+    mount.appendChild(renderer.domElement)
 
-  // Repose the live scene when the sign changes mid-view.
-  useEffect(() => {
-    if (rigRef.current && liveRef.current) {
-      try {
-        poseRig(rigRef.current, pose, flip)
-      } catch (e) {
-        console.warn('repose failed', e)
+    void makeSculptedHand(sign, material).then((model) => {
+      if (!active) return
+      model.updateMatrixWorld(true)
+      const bounds = new THREE.Box3().setFromObject(model, true)
+      const size = bounds.getSize(new THREE.Vector3())
+      model.position.sub(bounds.getCenter(new THREE.Vector3()))
+      fit = Math.max(size.x, size.y, size.z) * 0.67 + (hasMotion ? 0.4 : 0.14)
+      hand.add(model)
+
+      if (trace.length > 1) {
+        const anchor = path && /^[JZ]$/.test(sign) ? pose[sign === 'J' ? 20 : 8] : null
+        const offset = anchor ? toV(anchor) : new THREE.Vector3(0, 0, 0.12)
+        offset.x *= flip ? -1 : 1
+        guide = new THREE.Line(new THREE.BufferGeometry().setFromPoints(trace.map((point) => point.clone().add(offset))), new THREE.LineBasicMaterial({ color: 0x81eac0 }))
+        orbit.add(guide)
       }
+      resize()
+      setView('ready')
+      if (hasMotion && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        controls.current?.play(true)
+        setPlaying(true)
+      }
+    }).catch(() => { if (active) setView('diagram') })
+
+    return () => {
+      active = false
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+      controls.current = null
+      mount.removeEventListener('pointerdown', onDown)
+      mount.removeEventListener('pointermove', onMove)
+      mount.removeEventListener('lostpointercapture', onUp)
+      renderer.domElement.removeEventListener('webglcontextlost', onLoss)
+      guide?.geometry.dispose()
+      guide?.material.dispose()
+      material.dispose()
+      renderer.dispose()
+      renderer.forceContextLoss()
+      renderer.domElement.remove()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poseKey])
+  }, [pose, flip, path, sign, hasMotion])
 
   return (
-    <div>
-      <div
-        ref={mountRef}
-        style={{ width: '100%', height, cursor: 'grab', touchAction: 'none', position: 'relative', overflow: 'hidden' }}
-        onPointerDown={goLive}
-      >
-        {status !== 'live' && img && (
-          <img src={img} alt="3D hand reference" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} draggable={false} />
-        )}
-        {status !== 'live' && !img && (
-          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
-            {status === 'error' ? '3D preview unavailable' : 'Rendering hand...'}
-          </div>
-        )}
+    <div className="sl-model">
+      <div className="sl-model-viewport" style={{ height }}>
+        <div ref={mountRef} className="sl-model-canvas" data-ready={view === 'ready'} role="img" aria-label={`3D hand reference for ${sign}`} aria-hidden={view !== 'ready'} />
+        {view !== 'ready' && <HandDiagram pose={pose} sign={sign} flip={flip} />}
       </div>
-      <div style={{ fontSize: '11px', color: '#afbac0', fontWeight: 700, textAlign: 'center', marginTop: '4px' }}>
-        {status === 'live' ? '3D hand • drag to rotate' : 'Tap the hand for live 3D'}
-      </div>
+      {view === 'ready' ? (
+        <div className="sl-model-controls">
+          <button type="button" onClick={() => controls.current?.turn(-1)} aria-label="Rotate hand left"><ChevronLeft size={17} /></button>
+          <button type="button" onClick={() => controls.current?.turn(0)} aria-label="Reset viewing angle"><RotateCcw size={15} /></button>
+          <button type="button" onClick={() => controls.current?.turn(1)} aria-label="Rotate hand right"><ChevronRight size={17} /></button>
+          {hasMotion && <button className="sl-motion-button" type="button" onClick={() => {
+            controls.current?.play(!playing)
+            setPlaying(!playing)
+          }}>{playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}</button>}
+        </div>
+      ) : (
+        <p className="sl-model-state" role="status">{view === 'loading' ? 'Loading 3D view…' : 'Showing the handshape diagram'}</p>
+      )}
     </div>
   )
 }

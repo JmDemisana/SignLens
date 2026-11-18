@@ -1,36 +1,28 @@
 // Personal practice list: signs saved from the Dictionary for focused
 // drilling in Learn. Local only.
-import type { LessonItem } from './types'
+import { templatesForLang } from './templates'
+import type { SignLang } from './types'
 
 const KEY = 'signlens_practice_v1'
 
 export function getPracticeList(): string[] {
   try {
-    return JSON.parse(localStorage.getItem(KEY) || '[]') as string[]
+    const list: unknown = JSON.parse(localStorage.getItem(KEY) || '[]')
+    return Array.isArray(list) ? [...new Set(list.filter((id) => typeof id === 'string'))] : []
   } catch {
     return []
   }
 }
 
-export function addToPracticeList(id: string): string[] {
-  const list = getPracticeList()
-  if (!list.includes(id)) {
-    list.push(id)
-    try {
-      localStorage.setItem(KEY, JSON.stringify(list))
-    } catch { /* ignore */ }
-  }
-  return getPracticeList()
+export function savedForLanguage(lang: SignLang, list: string[]): string[] {
+  const supported = new Set(templatesForLang(lang).map(({ id }) => id))
+  return list.filter((id) => supported.has(id))
 }
 
-export function removeFromPracticeList(id: string): string[] {
-  const list = getPracticeList().filter((x) => x !== id)
+export function toggleSavedSign(id: string, current: string[]): string[] {
+  const list = current.includes(id) ? current.filter((sign) => sign !== id) : [...current, id]
   try {
     localStorage.setItem(KEY, JSON.stringify(list))
   } catch { /* ignore */ }
   return list
-}
-
-export function practiceListItems(): LessonItem[] {
-  return getPracticeList().map((id) => ({ id, label: id }))
 }

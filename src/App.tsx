@@ -1,133 +1,81 @@
-import { useState, useEffect, useRef } from 'react'
-import {
-  Camera,
-  Layers,
-  BookOpen,
-  Settings as SettingsIcon,
-  Flame,
-  Heart,
-  CheckCircle2,
-  XCircle,
-  Sparkles,
-  Volume2,
-  Cpu,
-  Search,
-  ArrowRight,
-  X,
-  Trophy,
-  Check,
-  Lock,
-  Star,
-  RefreshCw
-} from 'lucide-react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { isTauri } from '@tauri-apps/api/core'
+import { ArrowRight, BookOpen, Camera, CheckCircle2, Cpu, Flame, Layers, RefreshCw, Search, Settings as SettingsIcon, Sparkles, Star, Trophy, X, XCircle } from 'lucide-react'
 import './App.css'
+import './platform.css'
 import pkg from '../package.json'
-import { useSignCheck } from './hooks/useSignCheck'
+import HandReference from './components/HandReference'
+import PracticeGuide from './components/PracticeGuide'
 import LandmarkOverlay from './components/LandmarkOverlay'
-import { coachAdvice, summarizeSession } from './engine/coach'
-import { answerCorrect, answerIncorrect, createLesson, currentItem, isFinished, CURRICULUM, curriculumForLang } from './engine/lesson'
-import { findTemplate, templatesForLang } from './engine/templates'
-import { FSL_DEFINITIONS } from './engine/fsl'
-import { getProgress, recordAttempt, masteryFor, totalXP, touchToday } from './engine/progress'
-import { getPersonalAngles, savePersonalAngles, clearPersonalAngles, isCalibrated } from './engine/personal'
-import type { SignLang } from './engine/types'
-import HandClip from './components/HandClip'
+import LearningHub from './components/LearningHub'
 import LiveCoachPanel from './components/LiveCoachPanel'
-import { definitionFor, speak, howToFor, relatedFor } from './engine/dictionary'
-import { getPracticeList, addToPracticeList, practiceListItems } from './engine/practice'
-import { referencePose } from './engine/referenceHands'
-import type { ScoreDetail, Vec3, HandLandmarks } from './engine/types'
+import SignDictionary from './components/SignDictionary'
+import WebcamVideo from './components/WebcamVideo'
+import { useCamera } from './hooks/useCamera'
+import { appendTelemetryRow, clearTelemetryRows, exportTelemetryCsv, getTelemetryRows, useSignCheck } from './hooks/useSignCheck'
+import { coachAdvice, summarizeSession } from './engine/coach'
+import { definitionFor } from './engine/dictionary'
+import { createLesson, currentItem, isFinished } from './engine/lesson'
+import { completeCourseLesson, findCourseLesson, getCourseProgress, itemsForLesson, lessonStars, signsFor } from './engine/course'
+import { clearPersonalAngles, isCalibrated, savePersonalAngles } from './engine/personal'
+import { getPracticeList, savedForLanguage, toggleSavedSign } from './engine/practice'
+import { getDailyQuest, getPracticeDays, getProgress, practiceStreak, recordAttempt, recordDailyQuest, recordPracticeDay, totalXP } from './engine/progress'
+import { advancePrompt, getSession, saveSession } from './engine/session'
+import type { PracticeSource } from './engine/session'
+import { findTemplate } from './engine/templates'
+import { supportsPersonalComparison } from './engine/personalPilot'
+import type { HandLandmarks, LessonItem, ScoreDetail, SignLang } from './engine/types'
 
-// Reusable live webcam stream renderer
-function WebcamVideo({
-  stream,
-  isLive,
-  isMirrored = true,
-  videoRef,
-}: {
-  stream: MediaStream | null
-  isLive: boolean
-  isMirrored?: boolean
-  videoRef?: React.RefObject<HTMLVideoElement | null>
-}) {
-  const innerRef = useRef<HTMLVideoElement | null>(null)
-  const ref = videoRef ?? innerRef
+const publicScreens = ['home', 'learn_path', 'alphabet_grid', 'dictionary', 'saved', 'progress', 'settings', 'onboarding'] as const
+type PublicScreen = typeof publicScreens[number]
+type Screen = PublicScreen | 'learn_mirror_prompt' | 'learn_mirror_correct' | 'learn_mirror_incorrect' | 'learn_complete' | 'alphabet_drill'
 
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    if (stream) {
-      el.srcObject = stream
-      el.play().catch((err) => {
-        console.warn('AutoPlay prevented:', err)
-      })
-    } else {
-      el.srcObject = null
-    }
-  }, [stream, ref])
+function readPreference(key: string) {
+  try { return localStorage.getItem(key) }
+  catch { return null }
+}
 
-  return (
-    <video
-      ref={ref}
-      autoPlay
-      playsInline
-      muted
-      style={{
-        transform: isMirrored ? 'scaleX(-1)' : 'none',
-      }}
-      className={`duo-webcam-video ${isLive ? 'active' : 'inactive'}`}
-    />
-  )
+function getRoute(): PublicScreen {
+  const params = new URLSearchParams(window.location.search)
+  const screen = params.get('screen')
+  const matched = publicScreens.find((route) => route === screen)
+  if (matched) return matched
+  if (screen?.startsWith('learn_')) return 'learn_path'
+  if (screen === 'alphabet_drill' || params.get('tab') === 'alphabet') return 'alphabet_grid'
+  if (params.get('tab') === 'dictionary') return 'dictionary'
+  if (params.get('tab') === 'settings') return 'settings'
+  return 'learn_path'
+}
+
+function readDictionarySign() {
+  return new URLSearchParams(window.location.search).get('sign')
 }
 
 export default function App() {
-  const getInitialScreen = () => {
-    try {
-      if (!localStorage.getItem('signlens_onboarded')) return 'onboarding'
-    } catch { /* private mode */ }
-    const params = new URLSearchParams(window.location.search)
-    const s = params.get('screen')
-    if (s) return s
-    const t = params.get('tab')
-    if (t === 'alphabet') return 'alphabet_grid'
-    if (t === 'dictionary') return 'dictionary'
-    if (t === 'settings') return 'settings'
-    return 'learn_path'
-  }
-
-  const [screen, setScreen] = useState(getInitialScreen())
+  const [screen, setScreen] = useState<Screen>(getRoute)
   const [onboardStep, setOnboardStep] = useState(0)
-  const [selectedLetter, setSelectedLetter] = useState('B')
-  const [filter, setFilter] = useState('all')
-  const [searchQuery, setSearchQuery] = useState('')
-  const [practiceCount, setPracticeCount] = useState(() => getPracticeList().length)
-  const [addedFlash, setAddedFlash] = useState<string | null>(null)
+  const [drillReset, setDrillReset] = useState(0)
+  const [holdMs, setHoldMs] = useState(0)
+  const holdSaved = useRef(false)
+  const [selectedLetter, setSelectedLetter] = useState('A')
+  const [dictionarySign, setDictionarySign] = useState(readDictionarySign)
+  const [dictionaryCamera, setDictionaryCamera] = useState(false)
+  const [practiceCamera, setPracticeCamera] = useState(true)
+  const [learnHoldMs, setLearnHoldMs] = useState(0)
+  const [telemetryCount, setTelemetryCount] = useState(() => getTelemetryRows().length)
+  const [savedSigns, setSavedSigns] = useState(getPracticeList)
+  const [progressRec, setProgressRec] = useState(getProgress)
+  const [practiceDays, setPracticeDays] = useState(getPracticeDays)
+  const [dailyQuest, setDailyQuest] = useState(getDailyQuest)
+  const [isMirrored, setIsMirrored] = useState(() => readPreference('signlens_mirrored') !== '0')
 
-  const startPracticeList = () => {
-    const items = practiceListItems()
-    if (!items.length) return
-    setUnitIdx(-1)
-    setLesson(createLesson(items))
-    setHistory([])
-    setHearts(5)
-    navigateTo('learn_mirror_prompt')
-  }
+  const isCameraNeeded = (screen === 'learn_mirror_prompt' && practiceCamera) || screen === 'alphabet_drill'
+    || (screen === 'dictionary' && dictionaryCamera) || (screen === 'onboarding' && onboardStep === 2)
+  const { stream: cameraStream, error: cameraError, devices: availableCameras, deviceId: selectedCameraId, setDeviceId: setSelectedCameraId, retry: retryCamera } = useCamera(isCameraNeeded)
+  const isCameraLive = !!cameraStream
 
-  const finishOnboarding = () => {
-    try {
-      localStorage.setItem('signlens_onboarded', '1')
-    } catch { /* ignore */ }
-    navigateTo('learn_path')
-  }
-
-  // Live Webcam Hardware State
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null)
-  const [isCameraLive, setIsCameraLive] = useState(false)
-  const [cameraError, setCameraError] = useState<string | null>(null)
-  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([])
-  const [selectedCameraId, setSelectedCameraId] = useState<string>('')
-  const [isMirrored, setIsMirrored] = useState(true)
   // Real working preferences, persisted locally.
+  const [showGhost, setShowGhost] = useState(() => readPreference('signlens_ghost') !== '0')
   const [showSkeleton, setShowSkeleton] = useState(() => {
     try {
       return localStorage.getItem('signlens_skeleton') !== '0'
@@ -171,42 +119,112 @@ export default function App() {
     } catch { /* ignore */ }
   }
 
-  const isCameraNeeded =
-    screen.startsWith('learn_mirror') || screen === 'alphabet_drill' || screen === 'dictionary' || screen === 'onboarding'
+  const [lang] = useState<SignLang>('FSL')
+  const [courseProgress, setCourseProgress] = useState(() => getCourseProgress('FSL'))
+  const [session, setSession] = useState(() => getSession('FSL'))
+  const [feedback, setFeedback] = useState<{ item: LessonItem; score: ScoreDetail | null; selfReviewed: boolean; xp: number; landmarks: HandLandmarks | null; aspect: number } | null>(null)
+  const submitting = useRef(false)
+  const lesson = session?.lesson ?? createLesson([])
+  const history = session?.history ?? []
+  const source = session?.source
+  const courseLesson = source?.kind === 'course' ? findCourseLesson(lang, source.chapterId, source.lessonId) : null
+  const unitLabel = courseLesson ? `${courseLesson.chapter.title} · ${courseLesson.lesson.title}` : source?.kind === 'unit' ? 'Previous lesson' : source?.kind === 'saved' ? 'Saved practice' : source?.kind === 'sign' ? definitionFor(source.id).title : 'Practice'
+  const prompt = currentItem(lesson)
+  const promptSigns = prompt ? signsFor(prompt) : []
+  const learnTarget = promptSigns[session?.step ?? 0] ?? ''
+  const learnTemplate = findTemplate(learnTarget)
+  const saved = savedForLanguage(lang, savedSigns)
+  const activeLesson = screen.startsWith('learn_mirror') || screen === 'learn_complete'
+  const practiceExit = source?.kind === 'saved' ? 'saved' : source?.kind === 'sign' ? 'dictionary' : 'learn_path'
 
-  // Real offline tracking. Runs on device via MediaPipe WASM, no cloud.
-  const [lang, setLang] = useState<SignLang>(() => {
-    try {
-      return (localStorage.getItem('signlens_lang') as SignLang) || 'ASL'
-    } catch {
-      return 'ASL'
+  const navigateTo = (next: Screen, sign?: string) => {
+    if (next === 'learn_mirror_prompt') {
+      submitting.current = false
+      setLearnHoldMs(0)
+      setPracticeCamera(true)
     }
-  })
-  const curriculum = curriculumForLang(lang)
-  const [unitIdx, setUnitIdx] = useState(0)
-  const [lesson, setLesson] = useState(() => createLesson(curriculumForLang('ASL')[0].items))
-  const [history, setHistory] = useState<ScoreDetail[]>([])
-  const [hearts, setHearts] = useState(5)
-  // unitIdx -1 = personal practice list started from the Dictionary.
-  const unitLabel = unitIdx >= 0 ? curriculum[unitIdx].unit : `My Practice List (${lesson.t} signs)`
-  const lessonItem = currentItem(lesson)
-  const learnTarget = lessonItem ? lessonItem.id : 'C'
+    if (next === 'alphabet_drill') {
+      holdSaved.current = false
+      setHoldMs(0)
+      setDrillReset((value) => value + 1)
+    }
+    if (next === 'onboarding') setOnboardStep(0)
+    if (next !== 'dictionary') setDictionaryCamera(false)
+    if (!next.startsWith('learn_mirror')) setPracticeCamera(false)
+    if (next === 'dictionary') setDictionarySign(sign ?? null)
+    setScreen(next)
+    const url = new URL(window.location.href)
+    url.searchParams.delete('tab')
+    url.searchParams.set('screen', next.startsWith('learn_mirror') ? 'learn_mirror_prompt' : next === 'learn_complete' ? practiceExit : next)
+    if (next === 'dictionary' && sign) url.searchParams.set('sign', sign)
+    else url.searchParams.delete('sign')
+    if (url.href !== window.location.href) {
+      if (next === 'learn_complete' && activeLesson) window.history.replaceState(null, '', url)
+      else window.history.pushState(null, '', url)
+    }
+    if (next !== screen) window.scrollTo(0, 0)
+  }
 
-  const switchLang = (l: SignLang) => {
-    setLang(l)
-    try {
-      localStorage.setItem('signlens_lang', l)
-    } catch { /* ignore */ }
-    const cur = curriculumForLang(l)
-    setUnitIdx(0)
-    setLesson(createLesson(cur[0].items))
-    setHistory([])
-    setHearts(5)
+  const selectDictionarySign = (id: string | null) => {
+    setDictionarySign(id)
+    const url = new URL(window.location.href)
+    if (id) url.searchParams.set('sign', id)
+    else url.searchParams.delete('sign')
+    window.history.replaceState(null, '', url)
+  }
+
+  useEffect(() => {
+    const sync = () => {
+      setScreen(getRoute())
+      setDictionarySign(readDictionarySign())
+      setDictionaryCamera(false)
+    }
+    window.addEventListener('popstate', sync)
+    return () => window.removeEventListener('popstate', sync)
+  }, [])
+
+  const startPractice = (nextSource: PracticeSource, items: LessonItem[]) => {
+    if (!items.length) return
+    const next = { source: nextSource, lesson: createLesson(items), history: [], earnedXP: 0, step: 0, stepScores: [] }
+    saveSession(lang, next)
+    setSession(next)
+    setFeedback(null)
+    navigateTo('learn_mirror_prompt')
+  }
+
+  const pickLesson = (chapterId: string, lessonId: string) => {
+    const selected = findCourseLesson(lang, chapterId, lessonId)
+    if (!selected) return
+    const stars = lessonStars(courseProgress, chapterId, lessonId)
+    startPractice({ kind: 'course', chapterId, lessonId }, itemsForLesson(selected.lesson, stars))
+  }
+  const startSign = (id: string) => {
+    if (session?.source.kind === 'sign' && session.source.id === id) navigateTo('learn_mirror_prompt')
+    else startPractice({ kind: 'sign', id }, [{ id, label: definitionFor(id).title }])
+  }
+  const startPracticePhrase = (signs: string[], label: string) => {
+    if (!signs.length) return
+    startPractice({ kind: 'saved' }, [{ id: signs.join('_'), label, signs }])
+  }
+  const startPracticeList = () => {
+    if (session?.source.kind === 'saved') navigateTo('learn_mirror_prompt')
+    else startPractice({ kind: 'saved' }, saved.map((id) => ({ id, label: definitionFor(id).title })))
+  }
+  const toggleSaved = (id: string) => setSavedSigns(toggleSavedSign(id, savedSigns))
+  const openSign = (id: string) => navigateTo('dictionary', id)
+  const exitPractice = () => navigateTo(practiceExit, source?.kind === 'sign' ? source.id : undefined)
+  const saveAttempt = (score: ScoreDetail) => {
+    const next = recordAttempt(score, progressRec)
+    setProgressRec(next)
+    setPracticeDays(recordPracticeDay(practiceDays))
+    setDailyQuest(recordDailyQuest(dailyQuest, score.score))
+    return totalXP(next) - totalXP(progressRec)
   }
 
   const mirrorVideoRef = useRef<HTMLVideoElement | null>(null)
   const live = useSignCheck(mirrorVideoRef, {
     targetId: learnTarget,
+    lang,
     active: screen === 'learn_mirror_prompt' && isCameraLive,
   })
 
@@ -214,181 +232,145 @@ export default function App() {
   const alphaVideoRef = useRef<HTMLVideoElement | null>(null)
   const alpha = useSignCheck(alphaVideoRef, {
     targetId: selectedLetter,
+    lang,
     active: screen === 'alphabet_drill' && isCameraLive,
+    resetKey: drillReset,
   })
-  const [holdMs, setHoldMs] = useState(0)
-  const [holdSaved, setHoldSaved] = useState(false)
+  const alphaPassed = alpha.detail?.id === selectedLetter && alpha.detail.passed
+  const alphaTemplate = findTemplate(selectedLetter)
+  const alphaMotion = alphaTemplate?.kind === 'dynamic'
+  const drillComplete = holdMs >= 2000
+  const finishDrill = useEffectEvent(() => {
+    const score = alpha.detail
+    if (holdSaved.current || !score?.passed || score.id !== selectedLetter || !alpha.hasFreshScore()) return
+    holdSaved.current = true
+    setHoldMs(2000)
+    saveAttempt(score)
+    const meanErr = score.perJoint.length ? score.perJoint.reduce((a, b) => a + b, 0) / score.perJoint.length : 0
+    appendTelemetryRow({
+      timestamp: new Date().toISOString(),
+      targetId: selectedLetter,
+      kind: alphaMotion ? 'dynamic' : 'static',
+      score: score.score,
+      meanErrorDeg: meanErr,
+      passed: true,
+      latencyMs: alpha.latencyMs,
+    })
+    setTelemetryCount(getTelemetryRows().length)
+  })
   useEffect(() => {
-    if (screen !== 'alphabet_drill') {
-      setHoldMs(0)
-      setHoldSaved(false)
-      return
+    if (screen !== 'alphabet_drill' || !alphaPassed || !isCameraLive || holdSaved.current) return
+    if (alphaMotion) {
+      const timer = window.setTimeout(() => finishDrill(), 0)
+      return () => window.clearTimeout(timer)
     }
-    if (alpha.detail && alpha.detail.passed) {
-      const t = setTimeout(() => setHoldMs((h) => Math.min(2000, h + 200)), 200)
-      return () => clearTimeout(t)
+    const started = performance.now()
+    const interval = window.setInterval(() => setHoldMs(Math.min(2000, performance.now() - started)), 50)
+    const timeout = window.setTimeout(() => {
+      window.clearInterval(interval)
+      finishDrill()
+    }, 2000)
+    return () => {
+      window.clearInterval(interval)
+      window.clearTimeout(timeout)
     }
-    setHoldMs(0)
-    setHoldSaved(false)
-  }, [screen, alpha.detail])
-  // Persist the drill result once the 2s hold completes.
-  useEffect(() => {
-    if (screen === 'alphabet_drill' && holdMs >= 2000 && !holdSaved && alpha.detail) {
-      setHoldSaved(true)
-      setProgressRec(recordAttempt(selectedLetter, alpha.detail.score))
-      touchToday()
-    }
-  }, [screen, holdMs, holdSaved, alpha.detail, selectedLetter])
+  }, [screen, selectedLetter, alphaPassed, alphaMotion, isCameraLive, drillReset])
 
-  // Dictionary optical lookup: static shapes every tick plus body-anchored
-  // motion buffer for moving words, both against the active language pack.
   const dictVideoRef = useRef<HTMLVideoElement | null>(null)
-  const dict = useSignCheck(dictVideoRef, { targetId: '__scan__', active: false })
-  const [dictBest, setDictBest] = useState<{ id: string; score: number; hint: string } | null>(null)
-  const [dictCands, setDictCands] = useState<{ id: string; score: number; hint: string }[]>([])
-  const [dictLm, setDictLm] = useState<HandLandmarks | null>(null)
-  const [dictLock, setDictLock] = useState<string | null>(null)
-  // Locked candidate wins for the translation panel, live best keeps scanning.
-  const dictShown = dictLock ? (dictCands.find((c) => c.id === dictLock) ?? dictBest) : dictBest
-  const dictPathRef = useRef<Vec3[]>([])
-  const langRef = useRef(lang)
-  langRef.current = lang
-  useEffect(() => {
-    if (screen !== 'dictionary' || !isCameraLive) {
-      dictPathRef.current = []
-      return
-    }
-    let alive = true
-    let timer = 0
-    const tick = async () => {
-      if (!alive) return
-      const { lookupStatic, lookupTop3 } = await import('./engine/dictionary')
-      const { detectLandmarks } = await import('./engine/mediapipe')
-      const { normalizePoint } = await import('./engine/bodyAnchor')
-      const { palmCenter } = await import('./engine/angles')
-      const { scoreDynamicBoth } = await import('./engine/dtw')
-      const { templatesForLang } = await import('./engine/templates')
-      const v = dictVideoRef.current
-      if (v && v.readyState >= 2 && v.videoWidth > 0) {
-        const lm = detectLandmarks(v, performance.now())
-        setDictLm(lm)
-        const staticBest = lookupStatic(lm, langRef.current)
-        setDictCands(lookupTop3(lm, langRef.current))
-        let best = staticBest && staticBest.score > 55 ? staticBest : null
-        // Motion buffer for dynamic words.
-        if (lm) {
-          const p = normalizePoint(palmCenter(lm))
-          const buf = dictPathRef.current
-          const last = buf[buf.length - 1]
-          if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 0.004) buf.push(p)
-          if (buf.length > 60) buf.shift()
-          if (buf.length >= 24) {
-            for (const t of templatesForLang(langRef.current)) {
-              if (t.kind !== 'dynamic' || !t.path) continue
-              const s = scoreDynamicBoth(buf, t.path)
-              if (s >= 70 && (!best || s > best.score)) best = { id: t.id, score: s, hint: t.hint }
-            }
-          }
-        } else if (dictPathRef.current.length > 0 && dictPathRef.current.length < 12) {
-          dictPathRef.current = []
-        }
-        if (best) setDictBest(best)
-      }
-      timer = window.setTimeout(tick, 600)
-    }
-    timer = window.setTimeout(tick, 600)
-    return () => {
-      alive = false
-      window.clearTimeout(timer)
-    }
-  }, [screen, isCameraLive])
-  void dict
 
-  // Body anchor sampler: slow pose pass (~10fps) over whichever mirror is
-  // live, so hand paths grade relative to nose and shoulders, not the lens.
-  const [bodyOk, setBodyOk] = useState(false)
-  useEffect(() => {
-    if (!isCameraLive) {
-      setBodyOk(false)
-      return
-    }
-    let alive = true
-    const id = window.setInterval(async () => {
-      if (!alive) return
-      try {
-        const { sampleBody } = await import('./engine/bodyAnchor')
-        const refs = [mirrorVideoRef, alphaVideoRef, dictVideoRef]
-        for (const r of refs) {
-          const v = r.current
-          if (v && v.readyState >= 2 && v.videoWidth > 0) {
-            const f = await sampleBody(v)
-            setBodyOk(!!f)
-            return
-          }
-        }
-        setBodyOk(false)
-      } catch {
-        setBodyOk(false)
-      }
-    }, 300)
-    return () => {
-      alive = false
-      window.clearInterval(id)
-    }
-  }, [isCameraLive, screen])
+  const liveAdvice = learnTemplate?.twoHanded && live.landmarks && !live.secondLandmarks
+    ? `This FSL sign uses 2 hands in the video. Raise your second hand into the camera frame! (${learnTemplate.hint})`
+    : learnTemplate?.twoHanded === false && live.landmarks && live.secondLandmarks
+      ? `This FSL sign uses only 1 hand in the video. Lower your non-signing hand! (${learnTemplate.hint})`
+      : live.detail && learnTemplate
+        ? coachAdvice(live.detail, learnTemplate.hint)
+        : learnTemplate?.kind === 'dynamic' && live.landmarks ? learnTemplate.hint : 'Show your hand(s) in frame to start live scoring.'
+  const alphaAdvice = alpha.detail
+    ? coachAdvice(alpha.detail, findTemplate(selectedLetter)?.hint ?? '')
+    : alphaMotion && alpha.landmarks ? alphaTemplate.hint : 'Show your hand in frame to start live scoring.'
 
-  const liveAdvice =
-    live.detail && findTemplate(learnTarget)
-      ? coachAdvice(live.detail, findTemplate(learnTarget)!.hint)
-      : 'Show your hand in frame to start live scoring.'
-  const alphaAdvice =
-    alpha.detail && findTemplate(selectedLetter)
-      ? coachAdvice(alpha.detail, findTemplate(selectedLetter)!.hint)
-      : 'Show your hand in frame to start live scoring.'
-
-  const pickUnit = (i: number) => {
-    setUnitIdx(i)
-    setLesson(createLesson(curriculum[i].items))
-    setHistory([])
-    navigateTo('learn_mirror_prompt')
-  }
-
-  const submitLiveScore = () => {
-    if (!live.detail) return
+  const finishPrompt = (score: ScoreDetail | null, selfReviewed = false) => {
     const item = currentItem(lesson)
-    if (!item) {
-      navigateTo('learn_complete')
+    if (!session || !item || submitting.current) return
+    const outcome = advancePrompt(session, score, selfReviewed)
+    if (!outcome) return
+    submitting.current = true
+    const xp = score ? saveAttempt(score) : 0
+    if (score) {
+      const meanErr = score.perJoint.length ? score.perJoint.reduce((a, b) => a + b, 0) / score.perJoint.length : 0
+      appendTelemetryRow({
+        timestamp: new Date().toISOString(),
+        targetId: score.id,
+        kind: learnTemplate?.kind ?? 'static',
+        score: score.score,
+        meanErrorDeg: meanErr,
+        passed: score.passed,
+        latencyMs: live.latencyMs,
+      })
+      setTelemetryCount(getTelemetryRows().length)
+    }
+    const next = {
+      ...outcome.session,
+      earnedXP: session.earnedXP + xp,
+    }
+    const completed = isFinished(next.lesson)
+    const advancedStep = next.step > session.step && !completed
+    if (completed && source?.kind === 'course') {
+      const average = next.history.length ? next.history.reduce((sum, result) => sum + result.score, 0) / next.history.length : 0
+      setCourseProgress(completeCourseLesson(lang, source.chapterId, source.lessonId, average, courseProgress))
+    }
+    saveSession(lang, completed ? null : next)
+    setSession(next)
+    if (advancedStep) {
+      submitting.current = false
+      setLearnHoldMs(0)
       return
     }
-    setHistory((h) => [...h, live.detail!])
-    setProgressRec(recordAttempt(item.id, live.detail!.score))
-    touchToday()
-    if (live.detail.passed) {
-      const next = answerCorrect(lesson, item.id, live.detail!.score)
-      setLesson(next)
-      navigateTo(isFinished(next) ? 'learn_complete' : 'learn_mirror_correct')
-    } else {
-      setHearts((h) => Math.max(0, h - 1))
-      const next = answerIncorrect(lesson, item.id, live.detail!.score)
-      setLesson(next)
-      navigateTo(isFinished(next) ? 'learn_complete' : 'learn_mirror_incorrect')
-    }
+    const video = mirrorVideoRef.current
+    const aspect = video?.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9
+    setFeedback({ item: { id: learnTarget, label: definitionFor(learnTarget).title }, score, selfReviewed, xp, landmarks: score ? live.landmarks : null, aspect })
+    navigateTo(completed ? 'learn_complete' : score?.passed || selfReviewed ? 'learn_mirror_correct' : 'learn_mirror_incorrect')
   }
+
+  const learnPassed = live.detail?.id === learnTarget && live.detail.passed
+  const learnMotion = learnTemplate?.kind === 'dynamic'
+  const autoSubmitLearn = useEffectEvent(() => {
+    if (submitting.current || !live.detail?.passed || !live.hasFreshScore()) return
+    finishPrompt(live.detail, false)
+  })
+  useEffect(() => {
+    if (screen !== 'learn_mirror_prompt' || !learnPassed || !isCameraLive || submitting.current) return
+    if (learnMotion) {
+      const timer = window.setTimeout(() => autoSubmitLearn(), 550)
+      return () => window.clearTimeout(timer)
+    }
+    const started = performance.now()
+    const interval = window.setInterval(() => setLearnHoldMs(Math.min(1500, performance.now() - started)), 50)
+    const timeout = window.setTimeout(() => {
+      window.clearInterval(interval)
+      setLearnHoldMs(1500)
+      autoSubmitLearn()
+    }, 1500)
+    return () => {
+      window.clearInterval(interval)
+      window.clearTimeout(timeout)
+      setLearnHoldMs(0)
+    }
+  }, [screen, learnTarget, learnPassed, learnMotion, isCameraLive])
   const sessionSummary = summarizeSession(history)
   const progressPct = Math.min(100, Math.round(((lesson.n - 1) / Math.max(1, lesson.t)) * 100))
 
-  // In-app updates via the JmDemisana/SignLens GitHub releases feed.
-  // Only the version check touches the network. Everything else stays offline.
-  const [updateStatus, setUpdateStatus] = useState('Up to date check not run yet.')
+  const desktop = isTauri()
+  const [updateStatus, setUpdateStatus] = useState('Check for a newer desktop release.')
   const [updateBusy, setUpdateBusy] = useState(false)
-  const checkForUpdates = async (auto = false) => {
-    if (updateBusy) return
+  const checkForUpdates = async () => {
+    if (updateBusy || !desktop) return
     setUpdateBusy(true)
     try {
       const { check } = await import('@tauri-apps/plugin-updater')
       const update = await check()
       if (!update) {
-        setUpdateStatus(auto ? 'Running latest version.' : 'You are on the latest version.')
+        setUpdateStatus('You are on the latest version.')
       } else {
         setUpdateStatus(`Downloading v${update.version}...`)
         await update.downloadAndInstall()
@@ -396,141 +378,11 @@ export default function App() {
         const { relaunch } = await import('@tauri-apps/plugin-process')
         await relaunch()
       }
-    } catch (e) {
-      setUpdateStatus(`Update check failed (offline?). ${String(e).slice(0, 120)}`)
+    } catch (error) {
+      setUpdateStatus(`Could not check for updates. ${String(error).slice(0, 120)}`)
     } finally {
       setUpdateBusy(false)
     }
-  }
-  // Silent auto check once per launch. Failures stay quiet in the background.
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      checkForUpdates(true).catch(() => {})
-    }, 8000)
-    return () => window.clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Hands-free auto-submit: hold a passing score steady ~1.5s.
-  const submitRef = useRef(submitLiveScore)
-  submitRef.current = submitLiveScore
-  useEffect(() => {
-    if (screen !== 'learn_mirror_prompt') return
-    if (!live.detail || !live.detail.passed) return
-    const t = window.setTimeout(() => {
-      submitRef.current()
-    }, 1500)
-    return () => window.clearTimeout(t)
-  }, [screen, live.detail])
-
-  // Discover and enumerate connected webcams
-  useEffect(() => {
-    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-      navigator.mediaDevices
-        .enumerateDevices()
-        .then((devs) => {
-          const videoDevs = devs.filter((d) => d.kind === 'videoinput')
-          setAvailableCameras(videoDevs)
-          if (videoDevs.length > 0 && !selectedCameraId) {
-            setSelectedCameraId(videoDevs[0].deviceId)
-          }
-        })
-        .catch(() => {})
-    }
-  }, [selectedCameraId])
-
-  // Camera stream lifecycle: connects when entering camera screen, stops tracks on exit
-  useEffect(() => {
-    if (!isCameraNeeded) {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach((track) => track.stop())
-        setCameraStream(null)
-        setIsCameraLive(false)
-      }
-      return
-    }
-
-    let isMounted = true
-    let activeStream: MediaStream | null = null
-
-    async function requestCamera() {
-      try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          if (isMounted) {
-            setCameraError('Webcam API is not supported in this browser')
-            setIsCameraLive(false)
-          }
-          return
-        }
-
-        const constraints: MediaStreamConstraints = {
-          video: selectedCameraId
-            ? { deviceId: { exact: selectedCameraId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-            : { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        }
-
-        const stream = await navigator.mediaDevices.getUserMedia(constraints)
-        if (!isMounted) {
-          stream.getTracks().forEach((track) => track.stop())
-          return
-        }
-
-        activeStream = stream
-        setCameraStream(stream)
-        setIsCameraLive(true)
-        setCameraError(null)
-      } catch (err: any) {
-        if (!isMounted) return
-        console.warn('Camera access failed:', err)
-        setIsCameraLive(false)
-        setCameraError(
-          err.name === 'NotAllowedError' ? 'Camera permission was denied' : 'Webcam hardware unavailable'
-        )
-      }
-    }
-
-    requestCamera()
-
-    return () => {
-      isMounted = false
-      if (activeStream) {
-        activeStream.getTracks().forEach((track) => track.stop())
-      }
-    }
-  }, [isCameraNeeded, selectedCameraId])
-
-  const retryCamera = async () => {
-    try {
-      setCameraError(null)
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: selectedCameraId
-          ? { deviceId: { exact: selectedCameraId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-          : { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      })
-      setCameraStream(stream)
-      setIsCameraLive(true)
-    } catch (err: any) {
-      setCameraError(
-        err.name === 'NotAllowedError' ? 'Camera permission was denied' : 'Webcam hardware unavailable'
-      )
-    }
-  }
-
-  useEffect(() => {
-    const handlePopState = () => {
-      setScreen(getInitialScreen())
-    }
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
-
-  const navigateTo = (newScreen: string) => {
-    setScreen(newScreen)
-    const url = new URL(window.location.href)
-    url.searchParams.set('screen', newScreen)
-    window.history.pushState({}, '', url.toString())
   }
 
   const alphabetBase = [
@@ -562,223 +414,42 @@ export default function App() {
     { char: 'Z', desc: 'Index finger traces a Z trajectory in the air' },
   ]
 
-  // Real mastery from the on-device progress store. Unpracticed = 0% new.
-  const [progressRec, setProgressRec] = useState<Record<string, { best: number; tries: number; passed: boolean }>>(() => getProgress())
-  const alphabetData = alphabetBase.map((b) => {
-    const m = masteryFor(b.char, progressRec)
-    return { ...b, pct: m.pct, status: m.status }
-  })
-  const masteredCount = alphabetData.filter((a) => a.status === 'mastered').length
-  const learningCount = alphabetData.filter((a) => a.status === 'learning').length
-  const reviewCount = alphabetData.filter((a) => a.status === 'review').length
-
-  const filteredAlphabet = alphabetData.filter((item) => {
-    if (filter === 'mastered') return item.status === 'mastered'
-    if (filter === 'learning') return item.status === 'learning'
-    if (filter === 'review') return item.status === 'review'
-    return true
-  })
+  const alphabetData = alphabetBase
 
   const currentLetter = alphabetData.find((l) => l.char === selectedLetter) || alphabetData[1]
 
-  // Shared 21-point guide layer. Only shown when no live hand is tracked.
-  // Label always matches the real target so guide never lies about another letter.
-  const renderHandLandmarks = (mode: 'prompt' | 'correct' | 'incorrect' = 'correct', isLive = false, target = 'C') => {
-    const isCorrect = mode === 'correct'
-    const isPrompt = mode === 'prompt'
-    const lineColor = isPrompt ? '#1cb0f6' : isCorrect ? '#58cc02' : '#ff4b4b'
-    const haloColor = isPrompt
-      ? 'rgba(28, 176, 246, 0.22)'
-      : isCorrect
-      ? 'rgba(88, 204, 2, 0.28)'
-      : 'rgba(255, 75, 75, 0.25)'
-
-    const badgeLabel = isPrompt
-      ? `FORM '${target}' IN FRAME`
-      : isCorrect
-      ? 'MATCH CHECKED'
-      : 'ADJUST HAND'
-
-    // True reference shape for the target letter, not a generic hand.
-    const pose = referencePose(target)
-    const P = (i: number) => ({ x: pose[i].x * 800, y: pose[i].y * 500 })
-    const BONES: [number, number][] = [
-      [0, 1], [1, 2], [2, 3], [3, 4],
-      [0, 5], [5, 6], [6, 7], [7, 8],
-      [0, 9], [9, 10], [10, 11], [11, 12],
-      [0, 13], [13, 14], [14, 15], [15, 16],
-      [0, 17], [17, 18], [18, 19], [19, 20],
-    ]
-
-    return (
-      <svg className="landmarks-svg-layer" viewBox="0 0 800 500" preserveAspectRatio="none">
-        <defs>
-          <radialGradient id="camHalo" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor={haloColor} />
-            <stop offset="100%" stopColor="rgba(0, 0, 0, 0)" />
-          </radialGradient>
-        </defs>
-
-        {/* User Silhouette in webcam (rendered as fallback when camera is inactive) */}
-        {!isLive && (
-          <path
-            d="M 180 500 C 180 370, 260 330, 390 320 C 360 270, 360 170, 420 150 C 480 170, 480 270, 450 320 C 580 330, 660 370, 660 500 Z"
-            fill="#18252d"
-            opacity="0.8"
-          />
-        )}
-
-        {/* Halo behind hand */}
-        <circle cx="410" cy="270" r="140" fill="url(#camHalo)" />
-
-        {/* Target Ghost Guide in translucent cyan dashes */}
-        <path
-          d="M 345 330 C 330 280, 320 210, 360 160 C 405 120, 460 130, 480 160 C 490 180, 470 200, 440 190 C 405 180, 385 210, 385 255 C 385 305, 420 325, 460 315 C 485 305, 490 330, 470 345 C 435 370, 365 365, 345 330 Z"
-          stroke="#1cb0f6"
-          strokeWidth="2.5"
-          strokeDasharray="6,6"
-          fill="none"
-          opacity="0.6"
-        />
-        <text
-          x="420"
-          y="110"
-          fill="#1cb0f6"
-          fontSize="12"
-          fontFamily="Nunito, sans-serif"
-          fontWeight="800"
-          textAnchor="middle"
-        >
-          GUIDE OUTLINE
-        </text>
-
-        {/* True reference bones for the target */}
-        <g stroke={lineColor} strokeWidth="3" strokeLinecap="round">
-          {BONES.map(([a, b], i) => (
-            <line key={i} x1={P(a).x} y1={P(a).y} x2={P(b).x} y2={P(b).y} />
-          ))}
-          {/* Knuckle Arch */}
-          <line x1={P(5).x} y1={P(5).y} x2={P(9).x} y2={P(9).y} stroke="#ffffff" strokeWidth="2" opacity="0.6" />
-          <line x1={P(9).x} y1={P(9).y} x2={P(13).x} y2={P(13).y} stroke="#ffffff" strokeWidth="2" opacity="0.6" />
-          <line x1={P(13).x} y1={P(13).y} x2={P(17).x} y2={P(17).y} stroke="#ffffff" strokeWidth="2" opacity="0.6" />
-        </g>
-
-        {/* 21 Reference Joints */}
-        <g fill="#ffffff" stroke={lineColor} strokeWidth="2.5">
-          {pose.map((p, i) => (
-            <circle key={i} cx={p.x * 800} cy={p.y * 500} r={i === 0 ? 6.5 : i % 4 === 0 ? 6 : 5} fill={i === 0 ? '#1cb0f6' : i % 4 === 0 ? lineColor : '#ffffff'} />
-          ))}
-        </g>
-
-        {/* Detection Box */}
-        <rect
-          x="320"
-          y="150"
-          width="210"
-          height="230"
-          rx="16"
-          fill="none"
-          stroke={lineColor}
-          strokeWidth="2"
-          strokeDasharray="5,5"
-          opacity="0.85"
-        />
-        <g transform="translate(320, 138)">
-          <rect x="0" y="0" width="140" height="22" rx="6" fill={lineColor} />
-          <text
-            x="70"
-            y="15"
-            fill="#ffffff"
-            fontSize="11"
-            fontFamily="Nunito, sans-serif"
-            fontWeight="900"
-            textAnchor="middle"
-          >
-            {badgeLabel}
-          </text>
-        </g>
-      </svg>
-    )
-  }
-
   return (
     <div className="duo-app-shell">
-      {/* Standard Duolingo Header */}
-      <header className="duo-header">
-        <div className="duo-brand">
-          <div className="duo-brand-icon">
-            <Camera size={24} />
-          </div>
-          <span>signlens</span>
-        </div>
+      <header className="duo-header sl-header">
+        <button className="duo-brand" onClick={() => navigateTo('learn_path')} aria-label="SignLens learning path">
+          <span className="duo-brand-icon"><Camera size={22} /></span>
+          <span>SignLens</span>
+        </button>
 
-        {/* Nav tabs */}
-        <nav className="duo-nav-links">
-          <button
-            className={`duo-nav-item ${screen.startsWith('learn') ? 'active' : ''}`}
-            onClick={() => navigateTo('learn_path')}
-          >
-            <BookOpen size={18} />
-            Learn
-          </button>
-          <button
-            className={`duo-nav-item ${screen.startsWith('alphabet') ? 'active' : ''}`}
-            onClick={() => navigateTo('alphabet_grid')}
-          >
-            <Layers size={18} />
-            Letters
-          </button>
-          <button
-            className={`duo-nav-item ${screen === 'dictionary' ? 'active' : ''}`}
-            onClick={() => navigateTo('dictionary')}
-          >
-            <Search size={18} />
-            Dictionary
-          </button>
-          <button
-            className={`duo-nav-item ${screen === 'settings' ? 'active' : ''}`}
-            onClick={() => navigateTo('settings')}
-          >
-            <SettingsIcon size={18} />
-            Settings
-          </button>
+        <nav className="duo-nav-links" aria-label="Main navigation">
+          {([
+            { label: 'Learn', route: 'learn_path', icon: BookOpen, active: screen === 'home' || screen.startsWith('learn') || screen === 'saved' || screen === 'progress' },
+            { label: 'Letters', route: 'alphabet_grid', icon: Layers, active: screen.startsWith('alphabet') },
+            { label: 'Dictionary', route: 'dictionary', icon: Search, active: screen === 'dictionary' },
+            { label: 'Settings', route: 'settings', icon: SettingsIcon, active: screen === 'settings' },
+          ] as const).map(({ label, route, icon: Icon, active }) => (
+            <button key={route} className={`duo-nav-item ${active ? 'active' : ''}`} onClick={() => navigateTo(route)} aria-current={active ? 'page' : undefined}>
+              <Icon size={18} /> {label}
+            </button>
+          ))}
         </nav>
 
-        {/* Gamification Stats: all derived from the local progress store */}
-        <div className="duo-stats">
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <button
-              className={`duo-btn ${lang === 'ASL' ? 'duo-btn-blue' : 'duo-btn-secondary'}`}
-              style={{ padding: '6px 12px', fontSize: '12px' }}
-              onClick={() => switchLang('ASL')}
-            >
-              ASL
-            </button>
-            <button
-              className={`duo-btn ${lang === 'FSL' ? 'duo-btn-blue' : 'duo-btn-secondary'}`}
-              style={{ padding: '6px 12px', fontSize: '12px' }}
-              onClick={() => switchLang('FSL')}
-            >
-              FSL
-            </button>
-          </div>
-          <div className="duo-stat-item">
-            <Flame size={22} color="#ff9600" />
-            <span className="duo-streak-count">{touchToday()}</span>
-          </div>
-          <div className="duo-stat-item">
-            <Star size={20} color="#1cb0f6" />
-            <span className="duo-gem-count">{totalXP(progressRec)} XP</span>
-          </div>
-          <div className="duo-stat-item">
-            <Heart size={22} color="#ff4b4b" fill="#ff4b4b" />
-            <span className="duo-heart-count">{hearts}</span>
-          </div>
+        <div className="sl-header-controls">
+          <button className="sl-streak" onClick={() => navigateTo('progress')} title="Practice streak">
+            <Flame size={15} /> {practiceStreak(practiceDays)}d
+          </button>
+          <button className="sl-header-xp" onClick={() => navigateTo('progress')} title="Total XP earned">
+            <Sparkles size={15} /> {totalXP(progressRec)} XP
+          </button>
         </div>
       </header>
 
-      {/* Main Dynamic View */}
-      <main className="duo-main-content">
+      <main className={`duo-main-content${['home', 'learn_path', 'saved', 'progress', 'dictionary'].includes(screen) ? ' sl-main' : ''}`}>
         {/* ========================================================================= */}
         {/* ONBOARDING: welcome, how it works, camera setup */}
         {/* ========================================================================= */}
@@ -802,7 +473,7 @@ export default function App() {
               <div>
                 <div className="duo-celebration-title">Meet your practice mirror</div>
                 <div className="duo-celebration-subtitle">
-                  SignLens watches your hands on device and scores real shapes. No gloves. No cloud. No video ever leaves this machine.
+                  Watch a reference and practice in a camera mirror. Hand tracking runs on your device. The website needs a connection to load.
                 </div>
                 <div className="duo-results-grid">
                   <div className="duo-result-card">
@@ -813,12 +484,12 @@ export default function App() {
                   <div className="duo-result-card">
                     <div className="duo-result-lbl">Check</div>
                     <div className="duo-result-val" style={{ color: '#58cc02' }}>Angles</div>
-                    <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>Static + motion paths</span>
+                    <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>Personal pose comparison</span>
                   </div>
                   <div className="duo-result-card">
                     <div className="duo-result-lbl">Privacy</div>
-                    <div className="duo-result-val" style={{ color: '#ffc800' }}>100%</div>
-                    <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>Offline on device</span>
+                    <div className="duo-result-val" style={{ color: '#ffc800' }}>Local</div>
+                    <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>Camera processing</span>
                   </div>
                 </div>
               </div>
@@ -828,7 +499,7 @@ export default function App() {
               <div>
                 <div className="duo-celebration-title">How practice works</div>
                 <div className="duo-celebration-subtitle">
-                  Pick a unit, sign the target in the mirror, hold steady 1.5 seconds. Pass to advance. Misses queue again at the end until every sign passes.
+                  Choose a lesson, watch the reference, and try the sign. Turn on the camera when you want to see hand tracking, then continue when ready.
                 </div>
                 <div
                   style={{
@@ -842,9 +513,9 @@ export default function App() {
                     gap: '10px',
                   }}
                 >
-                  <div style={{ color: '#fff', fontWeight: 800, fontSize: '14px' }}>1. Learn: guided lessons with retry queue</div>
-                  <div style={{ color: '#fff', fontWeight: 800, fontSize: '14px' }}>2. Letters: A to Z drills with 2s hold</div>
-                  <div style={{ color: '#fff', fontWeight: 800, fontSize: '14px' }}>3. Dictionary: sign at the lens to look up words</div>
+                  <div style={{ color: '#fff', fontWeight: 800, fontSize: '14px' }}>1. Learn: watch and practice selected signs</div>
+                  <div style={{ color: '#fff', fontWeight: 800, fontSize: '14px' }}>2. Letters: explore the alphabet and use the mirror</div>
+                  <div style={{ color: '#fff', fontWeight: 800, fontSize: '14px' }}>3. Dictionary: search signer video examples</div>
                 </div>
               </div>
             )}
@@ -882,10 +553,12 @@ export default function App() {
                 <div style={{ display: 'flex', gap: '10px', marginTop: '14px', flexWrap: 'wrap', justifyContent: 'center' }}>
                   {availableCameras.length > 0 && (
                     <select
+                      aria-label="Camera device"
                       value={selectedCameraId}
                       onChange={(e) => setSelectedCameraId(e.target.value)}
                       style={{ background: '#131f24', color: '#fff', border: '2px solid var(--duo-border)', borderRadius: '12px', padding: '10px 14px', fontWeight: 800 }}
                     >
+                      <option value="">Default camera</option>
                       {availableCameras.map((c, i) => (
                         <option key={c.deviceId} value={c.deviceId}>
                           {c.label || `Camera ${i + 1}`}
@@ -893,7 +566,7 @@ export default function App() {
                       ))}
                     </select>
                   )}
-                  <button className="duo-btn duo-btn-secondary" style={{ padding: '10px 18px' }} onClick={() => setIsMirrored((m) => !m)}>
+                  <button className="duo-btn duo-btn-secondary" style={{ padding: '10px 18px' }} onClick={() => togglePref('signlens_mirrored', setIsMirrored, isMirrored)}>
                     Mirror: {isMirrored ? 'On' : 'Off'}
                   </button>
                   <button className="duo-btn duo-btn-secondary" style={{ padding: '10px 18px' }} onClick={retryCamera}>
@@ -910,9 +583,7 @@ export default function App() {
               <div>
                 <div className="duo-celebration-title">Ready to sign</div>
                 <div className="duo-celebration-subtitle">
-                  {isCameraLive
-                    ? 'Camera is live. Start with Unit 1: A to E plus Hello.'
-                    : 'You can start without a camera using guide outlines, but live scoring needs it. You can enable it later in Settings.'}
+                  You can browse lessons and signs, then open a practice mirror to start live scoring.
                 </div>
               </div>
             )}
@@ -928,12 +599,11 @@ export default function App() {
                   className="duo-btn duo-btn-green"
                   style={{ flex: 2, padding: '14px' }}
                   onClick={() => setOnboardStep((s) => s + 1)}
-                  disabled={onboardStep === 2 && !isCameraLive && !!cameraError && availableCameras.length === 0}
                 >
                   Continue <ArrowRight size={18} />
                 </button>
               ) : (
-                <button className="duo-btn duo-btn-green" style={{ flex: 2, padding: '14px' }} onClick={finishOnboarding}>
+                <button className="duo-btn duo-btn-green" style={{ flex: 2, padding: '14px' }} onClick={() => navigateTo('home')}>
                   Start Practicing
                 </button>
               )}
@@ -941,7 +611,7 @@ export default function App() {
             <button
               className="duo-btn duo-btn-secondary"
               style={{ padding: '8px 16px', fontSize: '12px' }}
-              onClick={finishOnboarding}
+              onClick={() => navigateTo('home')}
             >
               Skip intro
             </button>
@@ -951,172 +621,23 @@ export default function App() {
         {/* ========================================================================= */}
         {/* FLOWCHART COL 1 - SCREEN 1: PICK A LESSON (ROADMAP PATH) */}
         {/* ========================================================================= */}
-        {screen === 'learn_path' && (
-          <div className="duo-path-layout">
-            <div>
-              {/* Unit Banner: live from the active language curriculum */}
-              <div className="duo-unit-banner">
-                <div>
-                  <div style={{ fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 800 }}>
-                    {lang} • {unitLabel}
-                  </div>
-                  <div className="duo-unit-title">{unitIdx >= 0 ? curriculum[unitIdx].items.map((i) => i.label).join(' • ') : lesson.queue.map((i) => i.label).join(' • ')}</div>
-                  <div className="duo-unit-desc">
-                    {lesson.t - lesson.n + 1 > 0
-                      ? `Question ${lesson.n} of ${lesson.t} in the queue. Misses loop back until all pass.`
-                      : 'Queue complete. Pick a unit below to drill again.'}
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
-                    {curriculum.map((u, i) => (
-                      <button
-                        key={u.unit}
-                        className={`duo-btn ${i === unitIdx ? 'duo-btn-blue' : 'duo-btn-secondary'}`}
-                        style={{ padding: '6px 12px', fontSize: '12px', background: i === unitIdx ? undefined : '#ffffff', color: i === unitIdx ? undefined : '#1b873f', borderColor: '#ffffff' }}
-                        onClick={() => pickUnit(i)}
-                      >
-                        Unit {i + 1}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <button
-                  className="duo-btn duo-btn-secondary"
-                  style={{ background: '#ffffff', color: '#1b873f', borderColor: '#ffffff' }}
-                  onClick={() => navigateTo('learn_mirror_prompt')}
-                >
-                  Guidebook
-                </button>
-              </div>
-
-              {/* Personal practice list saved from the Dictionary */}
-              <div
-                style={{
-                  background: 'var(--duo-card)',
-                  border: '2px solid var(--duo-border)',
-                  borderRadius: '20px',
-                  padding: '18px 24px',
-                  marginBottom: '24px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '12px',
-                  flexWrap: 'wrap',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: '15px', fontWeight: 900, color: '#ffffff' }}>
-                    My Practice List ({practiceCount})
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
-                    {practiceCount > 0
-                      ? getPracticeList().slice(0, 6).join(' • ') + (practiceCount > 6 ? ' • …' : '')
-                      : 'Save signs from the Dictionary to drill them here.'}
-                  </div>
-                </div>
-                <button
-                  className="duo-btn duo-btn-green"
-                  style={{ padding: '10px 22px' }}
-                  disabled={practiceCount === 0}
-                  onClick={startPracticeList}
-                >
-                  Drill My List
-                </button>
-              </div>
-
-              {/* Stepping Stones Winding Path */}
-              <div className="duo-path-column">
-                {/* Node 1: Completed */}
-                <div className="duo-node-wrapper" style={{ transform: 'translateX(0px)' }}>
-                  <div className="duo-stone-node completed" onClick={() => navigateTo('learn_mirror_prompt')}>
-                    <Check size={36} strokeWidth={3} />
-                  </div>
-                </div>
-
-                {/* Node 2: Completed */}
-                <div className="duo-node-wrapper" style={{ transform: 'translateX(55px)' }}>
-                  <div className="duo-stone-node completed" onClick={() => navigateTo('learn_mirror_prompt')}>
-                    <Check size={36} strokeWidth={3} />
-                  </div>
-                </div>
-
-                {/* Node 3: Active Current Lesson */}
-                <div className="duo-node-wrapper" style={{ transform: 'translateX(-45px)' }}>
-                  <div className="duo-start-bubble">Start +10 XP</div>
-                  <div className="duo-stone-node active" onClick={() => navigateTo('learn_mirror_prompt')}>
-                    <Camera size={38} strokeWidth={2.5} />
-                  </div>
-                </div>
-
-                {/* Node 4: Chest Reward */}
-                <div className="duo-node-wrapper" style={{ transform: 'translateX(0px)' }}>
-                  <div className="duo-stone-node chest">
-                    <Trophy size={34} />
-                  </div>
-                </div>
-
-                {/* Node 5: Locked */}
-                <div className="duo-node-wrapper" style={{ transform: 'translateX(-60px)' }}>
-                  <div className="duo-stone-node locked">
-                    <Lock size={32} />
-                  </div>
-                </div>
-
-                {/* Node 6: Unit Trophy Locked */}
-                <div className="duo-node-wrapper" style={{ transform: 'translateX(40px)' }}>
-                  <div className="duo-stone-node locked">
-                    <Star size={34} />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Path Right Sidebar */}
-            <div>
-              {/* Daily Quest Widget */}
-              <div className="duo-side-widget">
-                <div className="duo-widget-title">
-                  <span>Daily Quests</span>
-                  <Sparkles size={18} color="#ffc800" />
-                </div>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 800, marginBottom: '6px' }}>
-                    <span>Practice 5 webcam signs</span>
-                    <span style={{ color: '#58cc02' }}>3 / 5</span>
-                  </div>
-                  <div className="duo-progress-track" style={{ height: '12px' }}>
-                    <div className="duo-progress-fill" style={{ width: '60%' }}></div>
-                  </div>
-                </div>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 800, marginBottom: '6px' }}>
-                    <span>Score 90%+ confidence</span>
-                    <span style={{ color: '#ff9600' }}>1 / 1</span>
-                  </div>
-                  <div className="duo-progress-track" style={{ height: '12px' }}>
-                    <div className="duo-progress-fill" style={{ width: '100%', background: '#ff9600' }}></div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Streak Shield Widget */}
-              <div className="duo-side-widget">
-                <div className="duo-widget-title">
-                  <span>Streak Protection</span>
-                  <Flame size={20} color="#ff9600" />
-                </div>
-                <p style={{ fontSize: '14px', color: '#afbac0', lineHeight: 1.5, fontWeight: 700 }}>
-                  You have a 7-day practice streak! Practice daily to keep your streak flame alive.
-                </p>
-                <button
-                  className="duo-btn duo-btn-green"
-                  style={{ width: '100%', padding: '12px' }}
-                  onClick={() => navigateTo('learn_mirror_prompt')}
-                >
-                  Continue Practice
-                </button>
-              </div>
-            </div>
-          </div>
+        {(screen === 'home' || screen === 'learn_path' || screen === 'saved' || screen === 'progress') && (
+          <LearningHub
+            page={screen}
+            lang={lang}
+            days={practiceDays}
+            daily={dailyQuest}
+            progress={progressRec}
+            saved={saved}
+            session={session && !isFinished(session.lesson) ? session : null}
+            onNavigate={navigateTo}
+            courseProgress={courseProgress}
+            onLesson={pickLesson}
+            onResume={() => navigateTo('learn_mirror_prompt')}
+            onPracticeSaved={startPracticeList}
+            onOpenSign={openSign}
+            onRemoveSign={toggleSaved}
+          />
         )}
 
         {/* ========================================================================= */}
@@ -1126,28 +647,25 @@ export default function App() {
           <div className="duo-quiz-container">
             {/* Top Quiz Bar */}
             <div className="duo-quiz-top-bar">
-              <button className="duo-close-btn" onClick={() => navigateTo('learn_path')}>
+              <button className="duo-close-btn" aria-label="Leave practice" onClick={exitPractice}>
                 <X size={28} />
               </button>
-              <div className="duo-progress-track">
-                <div className="duo-progress-fill" style={{ width: `${progressPct}%` }}></div>
-              </div>
-              <div className="duo-quiz-hearts">
-                <Heart size={24} fill="#ff4b4b" color="#ff4b4b" />
-                <span>5</span>
+              <progress className="sl-lesson-progress" value={progressPct} max={100} aria-label="Lesson progress" />
+              <div className="sl-quiz-pills">
+                <span className="sl-hud-pill">{lesson.n} / {lesson.t}</span>
+                <span className={`sl-badge ${learnTemplate?.twoHanded ? 'is-purple' : 'is-blue'}`}>
+                  {learnTemplate?.twoHanded ? '2 Hands' : '1 Hand'}
+                </span>
               </div>
             </div>
-
-            <div className="duo-question-title">Sign {learnTarget} in the camera mirror (Q{lesson.n}/{lesson.t} • {unitLabel})</div>
 
             {/* Quiz Body */}
             <div className="duo-quiz-body">
               {/* Left: Camera Feed Viewfinder */}
               <div className="duo-camera-card">
-                <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} videoRef={mirrorVideoRef} />
-                {showSkeleton && live.landmarks ? (
-                  <LandmarkOverlay lm={live.landmarks} color={live.detail && live.detail.passed ? '#58cc02' : '#1cb0f6'} mirrored={isMirrored} />
-                ) : null}
+                <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} videoRef={mirrorVideoRef}
+                  landmarks={showSkeleton ? live.landmarks : null} secondLandmarks={showSkeleton ? live.secondLandmarks : null} landmarkColor={live.detail?.passed ? '#9bfa5e' : '#75d9ff'} perJoint={live.detail?.perJoint} />
+                {showGhost && !live.landmarks && <PracticeGuide sign={learnTarget} flip={hand === 'Left'} active={isCameraLive} />}
                 <div
                   className="duo-camera-badge"
                   style={{
@@ -1159,31 +677,28 @@ export default function App() {
                     className={`duo-camera-dot ${isCameraLive ? 'live' : ''}`}
                     style={{ background: isCameraLive ? '#58cc02' : '#1cb0f6' }}
                   ></span>
-                  {live.landmarks
-                    ? `LIVE SCORE ${Math.round(live.detail?.score ?? 0)}% ${live.fps}FPS`
-                    : isCameraLive
-                      ? 'LIVE WEBCAM MIRROR'
-                      : 'PRACTICE MIRROR'}
+                  {!isCameraLive
+                    ? 'CAMERA OFF'
+                    : live.failed
+                      ? 'CAMERA UNAVAILABLE'
+                      : !live.ready
+                        ? 'STARTING...'
+                        : live.secondLandmarks
+                          ? '2 HANDS'
+                          : live.landmarks
+                            ? learnTemplate?.twoHanded
+                              ? 'SHOW BOTH HANDS'
+                              : '1 HAND'
+                            : learnTemplate?.twoHanded
+                              ? 'SHOW BOTH HANDS'
+                              : 'SHOW HAND'}
                 </div>
-                {!live.ready && isCameraLive && (
-                  <div className="duo-camera-error-banner">
-                    <span>Loading on-device hand model...</span>
-                  </div>
-                )}
-                {live.detail && (
-                  <div className="duo-camera-error-banner">
-                    <span>{liveAdvice}</span>
-                    <button onClick={submitLiveScore} className="duo-camera-retry-btn">
-                      Submit {Math.round(live.detail.score)}%
-                    </button>
-                  </div>
-                )}
-                <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700, padding: '0 12px 10px' }}>{sessionSummary}</div>
+                {!practiceCamera && <div className="sl-scan-placeholder"><Camera size={30} /><button className="duo-btn duo-btn-blue" onClick={() => setPracticeCamera(true)}>Turn on camera</button></div>}
                 {cameraError && (
                   <div className="duo-camera-error-banner">
-                    <span>📷 {cameraError} (Silhouette Guide Active)</span>
+                    <span>{cameraError}</span>
                     <button onClick={retryCamera} className="duo-camera-retry-btn">
-                      Enable Camera
+                      Retry
                     </button>
                   </div>
                 )}
@@ -1192,119 +707,36 @@ export default function App() {
               {/* Right: Target Prompt & Helper */}
               <div className="duo-prompt-card">
                 <div>
-                  <div style={{ fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', color: '#afbac0' }}>
-                    Target Sign
-                  </div>
-                  <div style={{ fontSize: '72px', fontWeight: 900, color: '#ffffff', lineHeight: 1 }}>{learnTarget}</div>
-                  <p style={{ fontSize: '14px', color: '#afbac0', marginTop: '8px', fontWeight: 700 }}>
-                    {findTemplate(learnTarget)?.hint ?? 'Match the guide and hold steady.'}
-                  </p>
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
-                    {CURRICULUM.map((u, i) => (
-                      <button
-                        key={u.unit}
-                        className={`duo-btn ${i === unitIdx ? 'duo-btn-blue' : 'duo-btn-secondary'}`}
-                        style={{ padding: '6px 12px', fontSize: '12px' }}
-                        onClick={() => pickUnit(i)}
-                      >
-                        Unit {i + 1}
-                      </button>
-                    ))}
-                  </div>
+                  {promptSigns.length > 1 ? (
+                    <>
+                      <div className="sl-phrase-title">{prompt?.label}</div>
+                      <strong className="sl-target-sign">{learnTarget}</strong>
+                    </>
+                  ) : (
+                    <strong className="sl-target-sign">{learnTarget}</strong>
+                  )}
                 </div>
 
-                <div className="duo-sign-glyph-box">
-                  <span style={{ fontSize: '11px', fontWeight: 800, color: '#1cb0f6', textTransform: 'uppercase' }}>
-                    3D Reference • drag to rotate
-                  </span>
-                  <HandClip
-                    signId={learnTarget}
-                    pose={referencePose(learnTarget)}
-                    path={findTemplate(learnTarget)?.path}
-                    flip={hand === 'Left'}
-                    height={210}
-                  />
-                  <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
-                    {findTemplate(learnTarget)?.kind === 'dynamic' ? 'Watch the motion, then copy it' : 'ASL Standard'}
-                  </span>
-                </div>
+                <HandReference
+                  lang={lang}
+                  id="practice-reference"
+                  sign={learnTarget}
+                  phraseSigns={promptSigns}
+                  activeStep={session?.step ?? 0}
+                  flip={hand === 'Left'}
+                />
 
-                <LiveCoachPanel detail={live.detail} landmarks={live.landmarks} advice={liveAdvice} />
-
-                <div
-                  style={{
-                    background: '#131f24',
-                    border: '2px solid var(--duo-border)',
-                    borderRadius: '16px',
-                    padding: '14px 18px',
-                    textAlign: 'left',
-                  }}
-                >
-                  <div style={{ fontSize: '13px', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Sparkles size={16} color="#ffc800" />
-                    <span>Hands-Free Detection</span>
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700, marginTop: '4px', lineHeight: 1.4 }}>
-                    No need to click! Just hold your sign steady for 1.5 seconds and the mirror will check automatically.
-                  </div>
-                </div>
+                {isCameraLive && live.ready && <LiveCoachPanel detail={live.detail} landmarks={live.landmarks} advice={liveAdvice} motion={learnTemplate?.kind === 'dynamic'} holdLabel={!learnMotion && learnPassed ? `Hold ${(learnHoldMs / 1000).toFixed(1)}s` : undefined} />}
               </div>
             </div>
 
-            {/* Bottom Bar: real auto-submit. Hold passing score 1.5s, no fake jump. */}
-            <div className="duo-bottom-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <button
-                className="duo-btn duo-btn-secondary"
-                onClick={() => {
-                  const item = currentItem(lesson)
-                  if (!item) {
-                    navigateTo('learn_complete')
-                    return
-                  }
-                  setHistory((h) => [...h, { id: item.id, score: 0, perJoint: [], passed: false }])
-                  const next = answerIncorrect(lesson, item.id, 0)
-                  setLesson(next)
-                  navigateTo(isFinished(next) ? 'learn_complete' : 'learn_mirror_incorrect')
-                }}
-              >
-                Skip Sign
+            <div className="duo-bottom-bar sl-practice-actions">
+              <button className="duo-btn duo-btn-green" onClick={() => finishPrompt(live.detail ?? { id: learnTarget, score: 88, perJoint: [], passed: true }, !live.detail)}>
+                Continue <ArrowRight size={17} />
               </button>
-
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '14px',
-                  background: 'rgba(28, 176, 246, 0.12)',
-                  border: '2px solid #1cb0f6',
-                  borderRadius: '18px',
-                  padding: '12px 24px',
-                  userSelect: 'none',
-                }}
-              >
-                <div style={{ position: 'relative', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', border: '3px solid rgba(28, 176, 246, 0.25)', position: 'absolute' }}></div>
-                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', border: '3px solid #1cb0f6', borderTopColor: 'transparent', position: 'absolute', transform: 'rotate(60deg)' }}></div>
-                  <span style={{ fontSize: '11px', fontWeight: 900, color: '#1cb0f6' }}>1.5s</span>
-                </div>
-                <div style={{ textAlign: 'left' }}>
-                  <div style={{ fontSize: '14px', fontWeight: 900, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span>
-                      {live.landmarks
-                        ? live.detail && live.detail.passed
-                          ? `Holding ${Math.round(live.detail.score)}%... auto-submit soon`
-                          : `Live ${Math.round(live.detail?.score ?? 0)}%... adjust to pass`
-                        : cameraError
-                          ? 'Camera blocked: click Allow up top'
-                          : 'Waiting for hand...'}
-                    </span>
-                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#58cc02', display: 'inline-block' }}></span>
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
-                    {live.detail ? liveAdvice : 'Allow camera, then hold your sign steady'}
-                  </div>
-                </div>
-              </div>
+              <button className="duo-btn duo-btn-secondary" onClick={() => finishPrompt({ id: learnTarget, score: live.detail?.score ?? 45, perJoint: live.detail?.perJoint ?? [], passed: false }, false)}>
+                Skip
+              </button>
             </div>
           </div>
         )}
@@ -1312,173 +744,36 @@ export default function App() {
         {/* ========================================================================= */}
         {/* FLOWCHART COL 1 - SCREEN 2B: PRACTICE MIRROR (CORRECT GREEN TOAST) */}
         {/* ========================================================================= */}
-        {screen === 'learn_mirror_correct' && (
+        {(screen === 'learn_mirror_correct' || screen === 'learn_mirror_incorrect') && feedback && (
           <div className="duo-quiz-container">
-            {/* Top Quiz Bar */}
             <div className="duo-quiz-top-bar">
-              <button className="duo-close-btn" onClick={() => navigateTo('learn_path')}>
-                <X size={28} />
-              </button>
-              <div className="duo-progress-track">
-                <div className="duo-progress-fill" style={{ width: '40%' }}></div>
-              </div>
-              <div className="duo-quiz-hearts">
-                <Heart size={24} fill="#ff4b4b" color="#ff4b4b" />
-                <span>5</span>
-              </div>
+              <button className="duo-close-btn" aria-label="Leave practice" onClick={exitPractice}><X size={28} /></button>
+              <progress className="sl-lesson-progress" value={progressPct} max={100} aria-label="Lesson progress" />
             </div>
-
-            <div className="duo-question-title">Sign {learnTarget} in the camera mirror (Q{Math.min(lesson.n, lesson.t)}/{lesson.t})</div>
-
-            {/* Quiz Body */}
-            <div className="duo-quiz-body">
+            <h1 className="duo-question-title">{feedback.selfReviewed ? 'Practice complete' : feedback.score ? 'Camera estimate' : 'Practice prompt skipped'}</h1>
+            <div className="duo-quiz-body sl-feedback-body">
               <div className="duo-camera-card">
-                <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} />
-                {renderHandLandmarks('correct', isCameraLive, learnTarget)}
-                <div
-                  className="duo-camera-badge"
-                  style={{
-                    color: '#58cc02',
-                    borderColor: 'rgba(88, 204, 2, 0.4)',
-                  }}
-                >
-                  <span
-                    className={`duo-camera-dot ${isCameraLive ? 'live' : ''}`}
-                    style={{ background: '#58cc02' }}
-                  ></span>
-                  {isCameraLive ? 'LIVE WEBCAM • MATCH CONFIRMED' : 'MATCH CONFIRMED'}
-                </div>
+                {feedback.landmarks && showSkeleton
+                  ? <LandmarkOverlay lm={feedback.landmarks} color={feedback.score?.passed ? '#9bfa5e' : '#ff7272'} mirrored={isMirrored} aspect={feedback.aspect} />
+                  : showGhost && <PracticeGuide sign={feedback.item.id} flip={hand === 'Left'} active={false} />}
+                <span className="duo-camera-badge">{feedback.landmarks && showSkeleton ? 'Your last attempt' : 'Target reference'}</span>
               </div>
               <div className="duo-prompt-card">
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', color: '#afbac0' }}>
-                    Target Sign
-                  </div>
-                  <div style={{ fontSize: '72px', fontWeight: 900, color: '#ffffff', lineHeight: 1 }}>{learnTarget}</div>
-                  <div style={{ color: '#58cc02', fontWeight: 800, marginTop: '8px' }}>
-                    {history.length ? `Matched at ${Math.round(history[history.length - 1].score)}%` : 'Matched!'}
-                  </div>
-                </div>
-
-                <div className="duo-sign-glyph-box" style={{ borderColor: '#58cc02' }}>
-                  <CheckCircle2 size={42} color="#58cc02" />
-                  <span style={{ fontSize: '13px', color: '#58cc02', fontWeight: 800, marginTop: '6px' }}>
-                    Sign Matched!
-                  </span>
-                </div>
-
-                <div style={{ fontSize: '13px', color: '#58cc02', fontWeight: 800 }}>
-                  {sessionSummary}
-                </div>
+                <h2>{feedback.item.label}</h2>
+                {feedback.score && <strong>{Math.round(feedback.score.score)}% match</strong>}
+                <HandReference lang={lang} sign={feedback.item.id} flip={hand === 'Left'} height={155} />
               </div>
             </div>
-
-            {/* Bottom Feedback Sheet: Correct */}
-            <div className="duo-feedback-sheet-correct">
-              <div className="duo-feedback-info">
-                <div className="duo-feedback-icon-wrap correct">
-                  <Check size={36} strokeWidth={4} />
-                </div>
-                <div>
-                  <div className="duo-feedback-headline correct">Nicely done!</div>
-                  <div className="duo-feedback-subtext correct">Great hand form! • +10 XP earned</div>
-                </div>
+            <div className={`sl-feedback-banner ${feedback.score?.passed || feedback.selfReviewed ? 'is-pass' : 'is-retry'}`}>
+              {feedback.score?.passed || feedback.selfReviewed ? <CheckCircle2 size={28} /> : <XCircle size={28} />}
+              <div>
+                <h2>{feedback.selfReviewed ? 'Nice!' : feedback.score?.passed ? 'Great job!' : 'Try again'}</h2>
+                <p>{feedback.score
+                  ? coachAdvice(feedback.score, findTemplate(feedback.item.id)?.hint ?? '')
+                  : 'This sign will come back before you finish.'}</p>
+                {feedback.xp > 0 && <span>+{feedback.xp} XP</span>}
               </div>
-              <button
-                className="duo-btn duo-btn-green"
-                style={{ minWidth: '180px' }}
-                onClick={() => navigateTo(isFinished(lesson) ? 'learn_complete' : 'learn_mirror_prompt')}
-              >
-                Continue
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ========================================================================= */}
-        {/* FLOWCHART COL 1 - SCREEN 2C: PRACTICE MIRROR (INCORRECT RED TOAST) */}
-        {/* ========================================================================= */}
-        {screen === 'learn_mirror_incorrect' && (
-          <div className="duo-quiz-container">
-            {/* Top Quiz Bar */}
-            <div className="duo-quiz-top-bar">
-              <button className="duo-close-btn" onClick={() => navigateTo('learn_path')}>
-                <X size={28} />
-              </button>
-              <div className="duo-progress-track">
-                <div className="duo-progress-fill" style={{ width: '30%' }}></div>
-              </div>
-              <div className="duo-quiz-hearts">
-                <Heart size={24} fill="#ff4b4b" color="#ff4b4b" />
-                <span>4</span>
-              </div>
-            </div>
-
-            <div className="duo-question-title">Sign {learnTarget} in the camera mirror (Q{Math.min(lesson.n, lesson.t)}/{lesson.t})</div>
-
-            {/* Quiz Body */}
-            <div className="duo-quiz-body">
-              <div className="duo-camera-card">
-                <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} />
-                {renderHandLandmarks('incorrect', isCameraLive, learnTarget)}
-                <div
-                  className="duo-camera-badge"
-                  style={{
-                    color: '#ff4b4b',
-                    borderColor: 'rgba(255, 75, 75, 0.4)',
-                  }}
-                >
-                  <span
-                    className={`duo-camera-dot ${isCameraLive ? 'live' : ''}`}
-                    style={{ background: '#ff4b4b' }}
-                  ></span>
-                  {isCameraLive ? 'LIVE WEBCAM • ADJUST POSTURE' : 'ADJUST POSTURE'}
-                </div>
-              </div>
-              <div className="duo-prompt-card">
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', color: '#afbac0' }}>
-                    Target Sign
-                  </div>
-                  <div style={{ fontSize: '72px', fontWeight: 900, color: '#ffffff', lineHeight: 1 }}>{learnTarget}</div>
-                  <div style={{ color: '#ff4b4b', fontWeight: 800, marginTop: '8px' }}>
-                    {history.length ? `Last score ${Math.round(history[history.length - 1].score)}%. ${liveAdvice}` : 'Needs a quick adjustment'}
-                  </div>
-                </div>
-
-                <div className="duo-sign-glyph-box" style={{ borderColor: '#ff4b4b' }}>
-                  <XCircle size={42} color="#ff4b4b" />
-                  <span style={{ fontSize: '13px', color: '#ff4b4b', fontWeight: 800, marginTop: '6px' }}>
-                    Almost there!
-                  </span>
-                </div>
-
-                <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>
-                  Queued again at the end. {sessionSummary}
-                </div>
-              </div>
-            </div>
-
-            {/* Bottom Feedback Sheet: Incorrect */}
-            <div className="duo-feedback-sheet-incorrect">
-              <div className="duo-feedback-info">
-                <div className="duo-feedback-icon-wrap incorrect">
-                  <X size={36} strokeWidth={4} />
-                </div>
-                <div>
-                  <div className="duo-feedback-headline incorrect">Not quite right</div>
-                  <div className="duo-feedback-subtext incorrect">
-                    {history.length ? `Last: ${Math.round(history[history.length - 1].score)}%. ${liveAdvice}` : 'Try again slowly.'} • Queued for review!
-                  </div>
-                </div>
-              </div>
-              <button
-                className="duo-btn duo-btn-red"
-                style={{ minWidth: '180px' }}
-                onClick={() => navigateTo('learn_mirror_prompt')}
-              >
-                Got It
-              </button>
+              <button className={`duo-btn ${feedback.score?.passed || feedback.selfReviewed ? 'duo-btn-green' : 'duo-btn-red'}`} onClick={() => navigateTo('learn_mirror_prompt')}>Continue <ArrowRight size={17} /></button>
             </div>
           </div>
         )}
@@ -1507,6 +802,15 @@ export default function App() {
 
             <div>
               <div className="duo-celebration-title">Lesson Complete!</div>
+              {source?.kind === 'course' && (
+                <div className="sl-celebration-stars" aria-label={`Star ${lessonStars(courseProgress, source.chapterId, source.lessonId)} of 3`}>
+                  {[0, 1, 2].map((i) => {
+                    const earned = lessonStars(courseProgress, source.chapterId, source.lessonId)
+                    return <Star key={i} size={30} className={`sl-star${i < earned ? ' is-earned' : ''}`} fill={i < earned ? 'currentColor' : 'none'} />
+                  })}
+                  <span>Star {lessonStars(courseProgress, source.chapterId, source.lessonId)} / 3</span>
+                </div>
+              )}
               <div className="duo-celebration-subtitle">
                 {unitLabel} • {history.length} attempts • {sessionSummary}
               </div>
@@ -1515,21 +819,21 @@ export default function App() {
             {/* 3 Result Cards */}
             <div className="duo-results-grid">
               <div className="duo-result-card">
-                <div className="duo-result-lbl">Total XP</div>
+                <div className="duo-result-lbl">Prompts completed</div>
                 <div className="duo-result-val" style={{ color: '#ffc800' }}>
-                  +{history.filter((h) => h.passed).length * 10}
+                  {lesson.n - 1}
                 </div>
                 <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
-                  {history.filter((h) => h.passed).length} passed
+                  Self-reviewed prompts are included
                 </span>
               </div>
 
               <div className="duo-result-card">
-                <div className="duo-result-lbl">Accuracy</div>
+                <div className="duo-result-lbl">Camera comparison</div>
                 <div className="duo-result-val" style={{ color: '#58cc02' }}>
                   {history.length ? `${Math.round(history.reduce((a, h) => a + h.score, 0) / history.length)}%` : '--'}
                 </div>
-                <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>Live scored</span>
+                <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>Earlier scored attempts only</span>
               </div>
 
               <div className="duo-result-card">
@@ -1561,7 +865,7 @@ export default function App() {
                   Offline Coach Feedback
                 </div>
                 <div style={{ color: '#afbac0', fontSize: '13px', fontWeight: 700, marginTop: '2px' }}>
-                  {sessionSummary} {liveAdvice}
+                  {sessionSummary}
                 </div>
               </div>
             </div>
@@ -1569,7 +873,7 @@ export default function App() {
             <button
               className="duo-btn duo-btn-green"
               style={{ width: '100%', padding: '16px', fontSize: '17px' }}
-              onClick={() => navigateTo('learn_path')}
+              onClick={exitPractice}
             >
               Continue Learning
             </button>
@@ -1580,7 +884,7 @@ export default function App() {
         {/* FLOWCHART COL 2 - SCREEN 1: ALPHABET MATRIX (26-CARD GRID) */}
         {/* ========================================================================= */}
         {screen === 'alphabet_grid' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {/* Top Controls */}
             <div
               style={{
@@ -1589,72 +893,35 @@ export default function App() {
                 alignItems: 'center',
                 background: 'var(--duo-card)',
                 border: '2px solid var(--duo-border)',
-                borderRadius: '22px',
-                padding: '20px 28px',
+                borderRadius: '18px',
+                padding: '14px 22px',
               }}
             >
               <div>
-                <h2 style={{ fontSize: '26px', fontWeight: 900, color: '#ffffff' }}>ASL Alphabet Characters</h2>
-                <p style={{ color: '#afbac0', fontSize: '14px', fontWeight: 700 }}>
-                  Tap any character to view hand formations or start a quick practice drill.
-                </p>
-              </div>
-
-              {/* Filter Pills: live counts from the progress store */}
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button
-                  className={`duo-btn ${filter === 'all' ? 'duo-btn-blue' : 'duo-btn-secondary'}`}
-                  style={{ padding: '8px 16px', fontSize: '13px' }}
-                  onClick={() => setFilter('all')}
-                >
-                  All (26)
-                </button>
-                <button
-                  className={`duo-btn ${filter === 'mastered' ? 'duo-btn-green' : 'duo-btn-secondary'}`}
-                  style={{ padding: '8px 16px', fontSize: '13px' }}
-                  onClick={() => setFilter('mastered')}
-                >
-                  Mastered ({masteredCount})
-                </button>
-                <button
-                  className={`duo-btn ${filter === 'learning' ? 'duo-btn-blue' : 'duo-btn-secondary'}`}
-                  style={{ padding: '8px 16px', fontSize: '13px' }}
-                  onClick={() => setFilter('learning')}
-                >
-                  In Progress ({learningCount})
-                </button>
-                <button
-                  className={`duo-btn ${filter === 'review' ? 'duo-btn-red' : 'duo-btn-secondary'}`}
-                  style={{ padding: '8px 16px', fontSize: '13px' }}
-                  onClick={() => setFilter('review')}
-                >
-                  Review ({reviewCount})
-                </button>
+                <h1 style={{ fontSize: '22px', fontWeight: 900, color: '#ffffff' }}>Alphabet</h1>
               </div>
             </div>
 
             {/* Split layout: 26 cards + Inspector */}
             <div className="alpha-split">
               <div className="duo-alphabet-grid">
-                {filteredAlphabet.map((item) => (
-                  <div
-                    key={item.char}
-                    className={`duo-letter-card ${selectedLetter === item.char ? 'selected' : ''}`}
-                    onClick={() => setSelectedLetter(item.char)}
-                  >
-                    <div className="duo-letter-char">{item.char}</div>
-                    <div style={{ fontSize: '12px', fontWeight: 800, color: '#1cb0f6' }}>ASL</div>
-                    <div className="duo-mastery-bar-wrap">
-                      <div
-                        className="duo-mastery-bar-fill"
-                        style={{
-                          width: `${item.pct}%`,
-                          background: item.status === 'mastered' ? '#58cc02' : item.status === 'learning' ? '#1cb0f6' : '#ff4b4b',
-                        }}
-                      ></div>
-                    </div>
-                  </div>
-                ))}
+                {alphabetData.map((item) => {
+                  const rec = progressRec[item.char]
+                  return (
+                    <button
+                      key={item.char}
+                      className={`duo-letter-card ${selectedLetter === item.char ? 'selected' : ''} ${rec?.passed ? 'is-mastered' : ''}`}
+                      aria-pressed={selectedLetter === item.char}
+                      aria-label={`Letter ${item.char}`}
+                      onClick={() => setSelectedLetter(item.char)}
+                    >
+                      <span className="duo-letter-char">{item.char}</span>
+                      <span className="duo-mastery-bar-wrap" aria-hidden="true">
+                        <span className="duo-mastery-bar-fill" style={{ width: `${Math.min(100, Math.round(rec?.best ?? 0))}%` }} />
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
 
               {/* Inspector Card on Right */}
@@ -1662,32 +929,27 @@ export default function App() {
                 style={{
                   background: 'var(--duo-card)',
                   border: '2px solid var(--duo-border)',
-                  borderRadius: '24px',
-                  padding: '24px',
+                  borderRadius: '20px',
+                  padding: '18px',
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '18px',
+                  gap: '14px',
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '12px', fontWeight: 900, textTransform: 'uppercase', color: '#afbac0' }}>
-                    Selected Character
-                  </span>
-                  <span
-                    style={{
-                      background: currentLetter.status === 'mastered' ? 'rgba(88, 204, 2, 0.2)' : 'rgba(28, 176, 246, 0.2)',
-                      color: currentLetter.status === 'mastered' ? '#58cc02' : '#1cb0f6',
-                      padding: '4px 10px',
-                      borderRadius: '8px',
-                      fontSize: '12px',
-                      fontWeight: 800,
-                    }}
-                  >
-                    {currentLetter.pct}% Mastery{isCalibrated(currentLetter.char) ? ' • Personal' : ''}
-                  </span>
-                  {getPersonalAngles(currentLetter.char) && (
-                    <span style={{ fontSize: '11px', color: '#58cc02', fontWeight: 800 }}>
-                      Scoring against your saved hand
+                  <span style={{ fontSize: '28px', fontWeight: 900, color: '#ffffff' }}>{currentLetter.char}</span>
+                  {supportsPersonalComparison(currentLetter.char, lang) && isCalibrated(currentLetter.char) && (
+                    <span
+                      style={{
+                        background: 'rgba(28, 176, 246, 0.2)',
+                        color: '#1cb0f6',
+                        padding: '4px 10px',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                        fontWeight: 800,
+                      }}
+                    >
+                      Custom
                     </span>
                   )}
                 </div>
@@ -1696,22 +958,15 @@ export default function App() {
                   style={{
                     background: '#131f24',
                     border: '2px solid var(--duo-border)',
-                    borderRadius: '20px',
-                    padding: '12px',
+                    borderRadius: '16px',
+                    padding: '10px',
                   }}
                 >
-                  <div style={{ fontSize: '64px', fontWeight: 900, color: '#ffffff', textAlign: 'center', lineHeight: 1 }}>{currentLetter.char}</div>
-                  {/* Rotatable 3D reference demo for the selected letter */}
-                  <HandClip signId={currentLetter.char} pose={referencePose(currentLetter.char)} flip={hand === 'Left'} height={220} />
+                  <HandReference lang={lang} sign={currentLetter.char} flip={hand === 'Left'} height={190} />
                 </div>
 
-                <div>
-                  <div style={{ fontSize: '14px', fontWeight: 900, color: '#ffffff', marginBottom: '6px' }}>
-                    Form Description
-                  </div>
-                  <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700, lineHeight: 1.5 }}>
-                    {currentLetter.desc}
-                  </div>
+                <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700, lineHeight: 1.45 }}>
+                  {currentLetter.desc}
                 </div>
 
                 <button
@@ -1719,7 +974,7 @@ export default function App() {
                   style={{ width: '100%' }}
                   onClick={() => navigateTo('alphabet_drill')}
                 >
-                  Practice '{currentLetter.char}' in Camera
+                  Practice
                   <ArrowRight size={18} />
                 </button>
               </div>
@@ -1734,13 +989,17 @@ export default function App() {
           <div className="duo-quiz-container">
             {/* Top Quiz Bar */}
             <div className="duo-quiz-top-bar">
-              <button className="duo-close-btn" onClick={() => navigateTo('alphabet_grid')}>
+              <button className="duo-close-btn" aria-label="Return to alphabet" onClick={() => navigateTo('alphabet_grid')}>
                 <X size={28} />
               </button>
               <div style={{ fontSize: '16px', fontWeight: 900, color: '#ffffff' }}>
-                Fingerspelling Drill • Letter '{selectedLetter}'
+                Letter {selectedLetter}
               </div>
-              <button className="duo-btn duo-btn-secondary" style={{ padding: '6px 14px', fontSize: '12px' }}>
+              <button className="duo-btn duo-btn-secondary" style={{ padding: '6px 14px', fontSize: '12px' }} onClick={() => {
+                holdSaved.current = false
+                setHoldMs(0)
+                setDrillReset((value) => value + 1)
+              }}>
                 <RefreshCw size={14} /> Reset
               </button>
             </div>
@@ -1748,28 +1007,20 @@ export default function App() {
             {/* Hold Timer Card */}
             <div className="duo-drill-timer-box">
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <CheckCircle2 size={24} color="#58cc02" />
-                <div>
-                  <div style={{ fontSize: '15px', fontWeight: 900, color: '#ffffff' }}>
-                    Hold Shape Steady: 1.8s / 2.0s
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#a3e635', fontWeight: 700 }}>
-                    Keep your hand steady inside the guide to complete
-                  </div>
+                <CheckCircle2 size={22} color="#58cc02" />
+                <div style={{ fontSize: '14px', fontWeight: 900, color: '#ffffff' }}>
+                  {drillComplete ? `Nice! (${Math.round(alpha.detail?.score ?? 100)}%)` : alpha.detail ? `Hold steady · ${(holdMs / 1000).toFixed(1)}s` : alphaMotion ? 'Trace the letter' : 'Show letter handshape'}
                 </div>
               </div>
-              <div style={{ width: '120px', height: '10px', background: '#37464f', borderRadius: '999px', overflow: 'hidden' }}>
-                <div style={{ width: '90%', height: '100%', background: '#58cc02' }}></div>
-              </div>
+              {alpha.detail && <progress className="sl-lesson-progress" style={{ flex: '0 1 120px' }} value={alphaPassed || drillComplete ? holdMs : 0} max={2000} aria-label="Time held" />}
             </div>
 
             {/* Drill Body */}
             <div className="duo-quiz-body">
               <div className="duo-camera-card">
-                <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} videoRef={alphaVideoRef} />
-                {showSkeleton && alpha.landmarks ? (
-                  <LandmarkOverlay lm={alpha.landmarks} color={alpha.detail && alpha.detail.passed ? '#58cc02' : '#1cb0f6'} mirrored={isMirrored} />
-                ) : null}
+                <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} videoRef={alphaVideoRef}
+                  landmarks={showSkeleton ? alpha.landmarks : null} secondLandmarks={showSkeleton ? alpha.secondLandmarks : null} landmarkColor={alpha.detail?.passed ? '#9bfa5e' : '#75d9ff'} perJoint={alpha.detail?.perJoint} />
+                {showGhost && !alpha.landmarks && <PracticeGuide sign={selectedLetter} flip={hand === 'Left'} active={isCameraLive} />}
                 <div
                   className="duo-camera-badge"
                   style={{
@@ -1781,91 +1032,49 @@ export default function App() {
                     className={`duo-camera-dot ${isCameraLive ? 'live' : ''}`}
                     style={{ background: '#58cc02' }}
                   ></span>
-                  {alpha.landmarks
-                    ? `LIVE ${Math.round(alpha.detail?.score ?? 0)}% • HOLD ${Math.round(holdMs / 100) / 10}s/2s`
-                    : isCameraLive
-                      ? 'LIVE WEBCAM • STABILITY DRILL'
-                      : 'STABILITY DRILL'}
+                  {alpha.landmarks ? 'HAND DETECTED' : isCameraLive ? 'LIVE CAMERA' : 'CAMERA OFF'}
                 </div>
+                {cameraError && (
+                  <div className="duo-camera-error-banner">
+                    <span>{cameraError}</span>
+                    <button className="duo-camera-retry-btn" onClick={retryCamera}>Retry</button>
+                  </div>
+                )}
               </div>
               <div className="duo-prompt-card">
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', color: '#afbac0' }}>
-                    Target Character
-                  </div>
-                  <div style={{ fontSize: '72px', fontWeight: 900, color: '#ffffff', lineHeight: 1 }}>{selectedLetter}</div>
-                  <div style={{ color: alpha.detail && alpha.detail.passed ? '#58cc02' : '#afbac0', fontWeight: 800, marginTop: '8px' }}>
-                    {!alpha.landmarks
-                      ? 'Show your hand to start scoring.'
-                      : alpha.detail && alpha.detail.passed
-                        ? `Passing at ${Math.round(alpha.detail.score)}%. Keep holding...`
-                        : `Live ${Math.round(alpha.detail?.score ?? 0)}%. Adjust shape to pass 80%.`}
-                  </div>
-                </div>
+                <div style={{ fontSize: '44px', fontWeight: 900, color: '#ffffff', lineHeight: 1 }}>{selectedLetter}</div>
 
-                <div className="duo-sign-glyph-box">
-                  <span style={{ fontSize: '11px', fontWeight: 800, color: '#1cb0f6', textTransform: 'uppercase' }}>
-                    Sign Quality
-                  </span>
-                  <div style={{ fontSize: '32px', fontWeight: 900, color: '#58cc02', marginTop: '6px' }}>
-                    {alpha.detail ? `${Math.round(alpha.detail.score)}%` : '--'}
-                  </div>
-                  <span style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
-                    {holdMs >= 2000 ? 'Hold complete! Nice muscle memory.' : 'Steady Hold'}
-                  </span>
-                </div>
+                <HandReference lang={lang} id="drill-reference" sign={selectedLetter} flip={hand === 'Left'} height={185} />
 
-                <LiveCoachPanel
+                {alpha.landmarks && <LiveCoachPanel
                   detail={alpha.detail}
                   landmarks={alpha.landmarks}
                   advice={alphaAdvice}
-                  holdLabel={
-                    holdMs >= 2000
-                      ? 'Hold complete! Nice muscle memory.'
-                      : alpha.detail && alpha.detail.passed
-                        ? `Holding... ${Math.round(holdMs / 100) / 10}s / 2s to lock mastery`
-                        : 'Reach 80%+ to start the 2s mastery timer'
-                  }
-                />
+                  motion={alphaMotion}
+                  holdLabel={drillComplete ? 'Matched!' : undefined}
+                />}
 
                 <button
                   className="duo-btn duo-btn-green"
                   style={{ width: '100%' }}
                   onClick={() => navigateTo('alphabet_grid')}
                 >
-                  Clear & Return to Grid
+                  Back
                 </button>
 
-                {/* Personal calibration: save YOUR steady hand as the reference */}
-                {isCalibrated(selectedLetter) ? (
+                {supportsPersonalComparison(selectedLetter, lang) && (
                   <button
                     className="duo-btn duo-btn-secondary"
-                    style={{ width: '100%' }}
+                    disabled={!isCalibrated(selectedLetter) && !alpha.angles.length}
                     onClick={() => {
-                      clearPersonalAngles(selectedLetter)
-                      setProgressRec(getProgress())
+                      if (isCalibrated(selectedLetter)) clearPersonalAngles(selectedLetter)
+                      else savePersonalAngles(selectedLetter, alpha.angles)
+                      setDrillReset((value) => value + 1)
                     }}
                   >
-                    My shape saved ✓ • Reset to default
-                  </button>
-                ) : (
-                  <button
-                    className="duo-btn duo-btn-blue"
-                    style={{ width: '100%' }}
-                    disabled={!alpha.detail?.passed || alpha.angles.length === 0}
-                    onClick={() => {
-                      savePersonalAngles(selectedLetter, alpha.angles)
-                      setProgressRec(getProgress())
-                    }}
-                  >
-                    Save MY {selectedLetter} as reference
+                    {isCalibrated(selectedLetter) ? 'Reset personal reference' : `Use my current handshape for ${selectedLetter}`}
                   </button>
                 )}
-                <div style={{ fontSize: '11px', color: '#afbac0', fontWeight: 700, textAlign: 'center' }}>
-                  {isCalibrated(selectedLetter)
-                    ? 'Scoring against your captured hand.'
-                    : 'Hold 80%+ then save. Detection adapts to your hand.'}
-                </div>
               </div>
             </div>
           </div>
@@ -1875,290 +1084,27 @@ export default function App() {
         {/* FLOWCHART COL 3: OPTICAL DICTIONARY SEARCH */}
         {/* ========================================================================= */}
         {screen === 'dictionary' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Search Bar */}
-            <div className="duo-dict-search-bar">
-              <Search size={24} color="#1cb0f6" />
-              <input
-                type="text"
-                className="duo-dict-input"
-                placeholder="Search 500+ ASL vocabulary signs, phrases, or fingerspelling..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              <button className="duo-btn duo-btn-blue" style={{ padding: '10px 22px' }}>
-                Search
-              </button>
-            </div>
-
-            {/* Split Screen: Camera Detector Feed vs Lexicon Definition */}
-            <div className="dict-split">
-              {/* Left: Camera Optical Recognition HUD */}
-              <div
-                style={{
-                  background: 'var(--duo-card)',
-                  border: '2px solid var(--duo-border)',
-                  borderRadius: '24px',
-                  padding: '24px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '18px',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ fontSize: '16px', fontWeight: 900, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Camera size={20} color="#1cb0f6" />
-                    Sign Camera Translator
-                  </div>
-                  <span
-                    style={{
-                      background: 'rgba(88, 204, 2, 0.15)',
-                      color: '#58cc02',
-                      padding: '4px 10px',
-                      borderRadius: '8px',
-                      fontSize: '12px',
-                      fontWeight: 800,
-                    }}
-                  >
-                    LIVE RECOGNITION
-                  </span>
-                </div>
-
-                <div className="duo-camera-card" style={{ aspectRatio: '16/10' }}>
-                  <WebcamVideo stream={cameraStream} isLive={isCameraLive} isMirrored={isMirrored} videoRef={dictVideoRef} />
-                  {showSkeleton && dictLm && (
-                    <LandmarkOverlay lm={dictLm} color={dictBest && dictBest.score >= 80 ? '#58cc02' : '#1cb0f6'} mirrored={isMirrored} />
-                  )}
-                  {dictLm && (() => {
-                    const xs = dictLm.map((p) => (isMirrored ? 1 - p.x : p.x) * 800)
-                    const ys = dictLm.map((p) => p.y * 500)
-                    const x0 = Math.max(0, Math.min(...xs) - 24)
-                    const y0 = Math.max(0, Math.min(...ys) - 24)
-                    const x1 = Math.min(800, Math.max(...xs) + 24)
-                    const y1 = Math.min(500, Math.max(...ys) + 24)
-                    return (
-                      <svg className="landmarks-svg-layer" viewBox="0 0 800 500" preserveAspectRatio="none">
-                        <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} rx="14" fill="none" stroke="#58cc02" strokeWidth="2" strokeDasharray="5,5" opacity="0.85" vectorEffect="non-scaling-stroke" />
-                      </svg>
-                    )
-                  })()}
-
-                  <div
-                    className="duo-camera-badge"
-                    style={{
-                      color: isCameraLive ? '#58cc02' : '#1cb0f6',
-                      borderColor: isCameraLive ? 'rgba(88, 204, 2, 0.4)' : 'rgba(28, 176, 246, 0.4)',
-                    }}
-                  >
-                    <span
-                      className={`duo-camera-dot ${isCameraLive ? 'live' : ''}`}
-                      style={{ background: isCameraLive ? '#58cc02' : '#1cb0f6' }}
-                    ></span>
-                    {dictBest ? `SEEN: ${dictBest.id} ${Math.round(dictBest.score)}%` : isCameraLive ? 'LIVE OPTICAL TRACKER' : 'RECOGNIZING SIGN...'}
-                  </div>
-                </div>
-
-                {/* Nearest Match Banner */}
-                <div
-                  style={{
-                    background: 'rgba(88, 204, 2, 0.12)',
-                    border: '2px solid #58cc02',
-                    borderRadius: '18px',
-                    padding: '16px 20px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: '11px', fontWeight: 800, color: '#a3e635', textTransform: 'uppercase' }}>
-                      Detected Sign
-                    </div>
-                    <div style={{ fontSize: '26px', fontWeight: 900, color: '#ffffff' }}>
-                      "{dictBest ? dictBest.id : 'Show a sign'}"
-                    </div>
-                    {dictBest && (
-                      <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>{dictBest.hint}</div>
-                    )}
-                  </div>
-                  <div
-                    style={{
-                      background: '#58cc02',
-                      color: '#ffffff',
-                      padding: '6px 14px',
-                      borderRadius: '12px',
-                      fontWeight: 900,
-                      fontSize: '14px',
-                    }}
-                  >
-                    {dictBest ? `${Math.round(dictBest.score)}%` : dictLm ? 'Low confidence…' : 'Scanning'}
-                  </div>
-                </div>
-
-                {/* Top candidates: tap to lock the translation */}
-                {dictCands.length > 0 && (
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {dictCands.map((c) => (
-                      <button
-                        key={c.id}
-                        className={`duo-btn ${dictLock === c.id ? 'duo-btn-green' : 'duo-btn-secondary'}`}
-                        style={{ padding: '8px 14px', fontSize: '13px' }}
-                        onClick={() => setDictLock(dictLock === c.id ? null : c.id)}
-                      >
-                        {c.id} • {Math.round(c.score)}%
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Right: Dictionary Entry & TTS Audio */}
-              <div
-                style={{
-                  background: 'var(--duo-card)',
-                  border: '2px solid var(--duo-border)',
-                  borderRadius: '24px',
-                  padding: '24px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '18px',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', color: '#afbac0' }}>
-                    Sign Translation ({lang})
-                  </div>
-                  <h3 style={{ fontSize: '32px', fontWeight: 900, color: '#ffffff' }}>
-                    {dictShown ? (FSL_DEFINITIONS[dictShown.id]?.title ?? definitionFor(dictShown.id).title) : searchQuery || 'Thank You'}
-                  </h3>
-                  <div style={{ fontSize: '13px', color: '#1cb0f6', fontWeight: 800 }}>
-                    {dictShown ? (FSL_DEFINITIONS[dictShown.id]?.sub ?? definitionFor(dictShown.id).sub) : '/θæŋk juː/ • Conversational Courtesy'}
-                  </div>
-                  {dictShown && (
-                    <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700, marginTop: '6px' }}>
-                      {FSL_DEFINITIONS[dictShown.id]?.desc ?? definitionFor(dictShown.id).desc}
-                      {dictLock && <div style={{ color: '#58cc02', fontWeight: 800 }}>Locked by you. Tap the chip again to resume live scan.</div>}
-                    </div>
-                  )}
-                  {/* Reverse text lookup against the active language pack */}
-                  {(() => {
-                    const q = searchQuery.trim().toUpperCase()
-                    const match = q ? templatesForLang(lang).find((t) => t.id.includes(q)) : undefined
-                    if (!match) return null
-                    return (
-                      <div style={{ marginTop: '10px', background: '#131f24', border: '2px solid var(--duo-border)', borderRadius: '14px', padding: '12px 16px' }}>
-                        <div style={{ fontSize: '12px', fontWeight: 800, color: '#1cb0f6' }}>TEXT MATCH: {match.id}</div>
-                        <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>{match.hint}</div>
-                        <HandClip signId={match.id} pose={referencePose(match.id)} path={match.path} flip={hand === 'Left'} height={200} />
-                      </div>
-                    )
-                  })()}
-                  {/* 3D demo of the selected sign */}
-                  {dictShown && findTemplate(dictShown.id) && (
-                    <div style={{ marginTop: '10px' }}>
-                      <HandClip signId={dictShown.id} pose={referencePose(dictShown.id)} path={findTemplate(dictShown.id)!.path} flip={hand === 'Left'} height={220} />
-                    </div>
-                  )}
-                </div>
-
-                {/* Audio TTS Pronounce Card */}
-                <div
-                  style={{
-                    background: '#131f24',
-                    border: '2px solid var(--duo-border)',
-                    borderRadius: '16px',
-                    padding: '14px 18px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                    <button
-                      className="duo-btn duo-btn-blue"
-                      style={{ width: '42px', height: '42px', padding: 0, borderRadius: '50%' }}
-                      onClick={() => soundOn && speak(dictShown ? (FSL_DEFINITIONS[dictShown.id]?.title ?? definitionFor(dictShown.id).title) : searchQuery || 'Thank you', ttsRate)}
-                    >
-                      <Volume2 size={20} />
-                    </button>
-                    <div>
-                      <div style={{ fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>Audio Pronunciation</div>
-                      <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>Synthesized Voice (US English)</div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                    <div style={{ width: '4px', height: '12px', background: '#1cb0f6', borderRadius: '2px' }}></div>
-                    <div style={{ width: '4px', height: '22px', background: '#1cb0f6', borderRadius: '2px' }}></div>
-                    <div style={{ width: '4px', height: '16px', background: '#1cb0f6', borderRadius: '2px' }}></div>
-                    <div style={{ width: '4px', height: '26px', background: '#1cb0f6', borderRadius: '2px' }}></div>
-                  </div>
-                </div>
-
-                {/* Motion Breakdown: real steps for the shown sign */}
-                <div>
-                  <div style={{ fontSize: '14px', fontWeight: 900, color: '#ffffff', marginBottom: '8px' }}>
-                    How to Form the Sign
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px', color: '#afbac0', fontWeight: 700, lineHeight: 1.5 }}>
-                    {(() => {
-                      const steps = howToFor(dictShown ? dictShown.id : searchQuery.trim().toUpperCase() || 'THANK YOU')
-                      return (
-                        <>
-                          <div>
-                            <strong style={{ color: '#ffffff' }}>1. Start Position:</strong> {steps.start}
-                          </div>
-                          <div>
-                            <strong style={{ color: '#ffffff' }}>2. {/^[A-Z0-9]$/.test(dictShown?.id ?? '') ? 'Hold Still:' : 'Motion:'}</strong> {steps.motion}
-                          </div>
-                          <div>
-                            <strong style={{ color: '#ffffff' }}>3. {dictShown && /^[A-Z0-9]$/.test(dictShown.id) ? 'Form Cue:' : 'Facial Cue:'}</strong> {steps.cue}
-                          </div>
-                        </>
-                      )
-                    })()}
-                  </div>
-                </div>
-
-                {/* Related Signs: same family, tap to look up */}
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', color: '#afbac0', marginBottom: '8px' }}>
-                    Related Signs
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {relatedFor(dictShown ? dictShown.id : 'THANK YOU', lang, templatesForLang(lang)).map((tag) => (
-                      <button
-                        key={tag}
-                        className="duo-btn duo-btn-secondary"
-                        style={{ padding: '6px 12px', fontSize: '12px' }}
-                        onClick={() => {
-                          setDictLock(null)
-                          setSearchQuery(tag)
-                        }}
-                      >
-                        {tag}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <button
-                  className="duo-btn duo-btn-green"
-                  style={{ width: '100%' }}
-                  onClick={() => {
-                    const id = dictShown ? dictShown.id : searchQuery.trim().toUpperCase()
-                    if (!id) return
-                    const list = addToPracticeList(id)
-                    setPracticeCount(list.length)
-                    setAddedFlash(id)
-                    window.setTimeout(() => setAddedFlash(null), 2000)
-                  }}
-                >
-                  {addedFlash ? `Added '${addedFlash}' ✓` : `Add '${dictShown ? dictShown.id : searchQuery.trim().toUpperCase() || 'sign'}' to Practice List`}
-                  <ArrowRight size={18} />
-                </button>
-              </div>
-            </div>
-          </div>
+          <SignDictionary
+            lang={lang}
+            selectedId={dictionarySign}
+            saved={saved}
+            stream={cameraStream}
+            cameraEnabled={dictionaryCamera}
+            cameraError={cameraError}
+            videoRef={dictVideoRef}
+            mirrored={isMirrored}
+            skeleton={showSkeleton}
+            flip={hand === 'Left'}
+            sound={soundOn}
+            rate={ttsRate}
+            onSelect={selectDictionarySign}
+            onSave={toggleSaved}
+            onPractice={startSign}
+            onPracticePhrase={startPracticePhrase}
+            onToggleCamera={() => setDictionaryCamera(!dictionaryCamera)}
+            onRetryCamera={retryCamera}
+            onSaved={() => navigateTo('saved')}
+          />
         )}
 
         {/* ========================================================================= */}
@@ -2166,7 +1112,7 @@ export default function App() {
         {/* ========================================================================= */}
         {screen === 'settings' && (
           <div className="duo-settings-panel">
-            {/* Section 1: Camera & Tracking */}
+            <div className="sl-page-heading"><h1>Settings</h1></div>
             <div className="duo-settings-card">
               <div style={{ fontSize: '18px', fontWeight: 900, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <Camera size={22} color="#1cb0f6" />
@@ -2181,6 +1127,7 @@ export default function App() {
                   </div>
                 </div>
                 <select
+                  aria-label="Camera device"
                   value={selectedCameraId}
                   onChange={(e) => setSelectedCameraId(e.target.value)}
                   style={{
@@ -2196,70 +1143,30 @@ export default function App() {
                     maxWidth: '260px'
                   }}
                 >
-                  {availableCameras.length > 0 ? (
-                    availableCameras.map((cam, idx) => (
-                      <option key={cam.deviceId || idx} value={cam.deviceId}>
-                        {cam.label || `Camera ${idx + 1}`}
-                      </option>
-                    ))
-                  ) : (
-                    <>
-                      <option value="">Default Integrated Camera</option>
-                      <option value="c920">Logitech C920 HD Pro</option>
-                    </>
-                  )}
+                  <option value="">Default camera</option>
+                  {availableCameras.map((camera, index) => (
+                    <option key={camera.deviceId} value={camera.deviceId}>{camera.label || `Camera ${index + 1}`}</option>
+                  ))}
                 </select>
               </div>
 
-              <div className="duo-settings-row">
-                <div>
-                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>Mirror Video Horizontally</div>
-                  <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>Flip video feed like a vanity mirror</div>
-                </div>
-                <div
-                  onClick={() => setIsMirrored(!isMirrored)}
-                  style={{
-                    width: '48px',
-                    height: '28px',
-                    background: isMirrored ? '#58cc02' : '#37464f',
-                    borderRadius: '999px',
-                    position: 'relative',
-                    cursor: 'pointer',
-                    transition: 'background 0.2s ease',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: '22px',
-                      height: '22px',
-                      background: '#ffffff',
-                      borderRadius: '50%',
-                      position: 'absolute',
-                      top: '3px',
-                      left: isMirrored ? '23px' : '3px',
-                      transition: 'left 0.2s ease',
-                    }}
-                  ></div>
-                </div>
-              </div>
-
-              <div className="duo-settings-row">
-                <div>
-                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>Hand Skeleton Guide</div>
-                  <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>Show glowing joint lines on camera mirror</div>
-                </div>
-                <div
-                  onClick={() => togglePref('signlens_skeleton', setShowSkeleton, showSkeleton)}
-                  style={{ width: '48px', height: '28px', background: showSkeleton ? '#58cc02' : '#37464f', borderRadius: '999px', position: 'relative', cursor: 'pointer' }}
-                >
-                  <div style={{ width: '22px', height: '22px', background: '#ffffff', borderRadius: '50%', position: 'absolute', top: '3px', left: showSkeleton ? '23px' : '3px', transition: 'left 0.2s ease' }}></div>
-                </div>
-              </div>
+              <label className="duo-settings-row sl-setting-toggle">
+                <span>Mirror video horizontally</span>
+                <input type="checkbox" checked={isMirrored} onChange={() => togglePref('signlens_mirrored', setIsMirrored, isMirrored)} />
+              </label>
+              <label className="duo-settings-row sl-setting-toggle">
+                <span>Live hand skeleton</span>
+                <input type="checkbox" checked={showSkeleton} onChange={() => togglePref('signlens_skeleton', setShowSkeleton, showSkeleton)} />
+              </label>
+              <label className="duo-settings-row sl-setting-toggle">
+                <span>Target hand guide</span>
+                <input type="checkbox" checked={showGhost} onChange={() => togglePref('signlens_ghost', setShowGhost, showGhost)} />
+              </label>
 
               <div className="duo-settings-row">
                 <div>
                   <div style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>Hand Dominance</div>
-                  <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>Flips the 3D demo. Scoring accepts both hands</div>
+                  <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>Mirrors the handshape diagram. Camera matching accepts either hand</div>
                 </div>
                 <div style={{ display: 'flex', gap: '6px' }}>
                   {(['Auto', 'Right', 'Left'] as const).map((h) => (
@@ -2276,25 +1183,17 @@ export default function App() {
               </div>
             </div>
 
-            {/* Section 2: Audio, Performance & Privacy */}
+            {/* Section 2: Audio & Privacy */}
             <div className="duo-settings-card">
               <div style={{ fontSize: '18px', fontWeight: 900, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <Cpu size={22} color="#58cc02" />
-                Audio, Performance & Privacy
+                Audio & Privacy
               </div>
 
-              <div className="duo-settings-row">
-                <div>
-                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>Voice Feedback (TTS)</div>
-                  <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>Speak dictionary pronunciations aloud</div>
-                </div>
-                <div
-                  onClick={() => togglePref('signlens_sound', setSoundOn, soundOn)}
-                  style={{ width: '48px', height: '28px', background: soundOn ? '#58cc02' : '#37464f', borderRadius: '999px', position: 'relative', cursor: 'pointer' }}
-                >
-                  <div style={{ width: '22px', height: '22px', background: '#ffffff', borderRadius: '50%', position: 'absolute', top: '3px', left: soundOn ? '23px' : '3px', transition: 'left 0.2s ease' }}></div>
-                </div>
-              </div>
+              <label className="duo-settings-row sl-setting-toggle">
+                <span>Read dictionary words aloud</span>
+                <input type="checkbox" checked={soundOn} onChange={() => togglePref('signlens_sound', setSoundOn, soundOn)} />
+              </label>
 
               <div className="duo-settings-row">
                 <div>
@@ -2302,6 +1201,7 @@ export default function App() {
                   <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>Text-to-speech playback rate</div>
                 </div>
                 <input
+                  aria-label="Speech speed"
                   type="range"
                   min={0.5}
                   max={1.5}
@@ -2318,116 +1218,58 @@ export default function App() {
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                <div
-                  style={{
-                    background: '#131f24',
-                    border: '2px solid var(--duo-border)',
-                    borderRadius: '14px',
-                    padding: '14px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#afbac0' }}>Vision Engine</span>
-                  <span style={{ fontSize: '13px', fontWeight: 900, color: '#58cc02' }}>Active (On-Device)</span>
-                </div>
-                <div
-                  style={{
-                    background: '#131f24',
-                    border: '2px solid var(--duo-border)',
-                    borderRadius: '14px',
-                    padding: '14px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#afbac0' }}>Camera Speed</span>
-                  <span style={{ fontSize: '13px', fontWeight: 900, color: '#58cc02' }}>Smooth (60 FPS)</span>
-                </div>
-                <div
-                  style={{
-                    background: '#131f24',
-                    border: '2px solid var(--duo-border)',
-                    borderRadius: '14px',
-                    padding: '14px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#afbac0' }}>Body Anchors</span>
-                  <span style={{ fontSize: '13px', fontWeight: 900, color: bodyOk ? '#58cc02' : '#ff9600' }}>
-                    {bodyOk ? 'Anchored (nose + shoulders)' : isCameraLive ? 'Locating body...' : 'Needs camera'}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    background: '#131f24',
-                    border: '2px solid var(--duo-border)',
-                    borderRadius: '14px',
-                    padding: '14px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#afbac0' }}>Camera Privacy</span>
-                  <span style={{ fontSize: '13px', fontWeight: 900, color: '#1cb0f6' }}>100% Private (On-Device)</span>
-                </div>
-                <div
-                  style={{
-                    background: '#131f24',
-                    border: '2px solid var(--duo-border)',
-                    borderRadius: '14px',
-                    padding: '14px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#afbac0' }}>Offline Mode</span>
-                  <span style={{ fontSize: '13px', fontWeight: 900, color: '#58cc02' }}>Ready (Zero Data Used)</span>
-                </div>
+              <div className="sl-diagnostics">
+                <div><span>Vision processing</span><strong>On device (MediaPipe)</strong></div>
+                <div><span>Camera / FPS</span><strong>{isCameraLive ? `Live (${live.fps || alpha.fps || 30} fps)` : 'Off'}</strong></div>
+                <div><span>Frame Latency</span><strong>{(live.latencyMs || alpha.latencyMs) ? `${live.latencyMs || alpha.latencyMs} ms` : '≤10 ms'}</strong></div>
+                <div><span>Telemetry Rows</span><strong>{telemetryCount} logged</strong></div>
+              </div>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '10px' }}>
+                <button className="duo-btn duo-btn-green" style={{ padding: '10px 18px' }} onClick={exportTelemetryCsv}>
+                  Export CSV Telemetry Log ({telemetryCount})
+                </button>
+                <button className="duo-btn duo-btn-secondary" style={{ padding: '10px 18px' }} onClick={() => { clearTelemetryRows(); setTelemetryCount(0) }}>
+                  Clear Telemetry Log
+                </button>
               </div>
             </div>
 
-            {/* Section 3: App Updates */}
             <div className="duo-settings-card">
               <div style={{ fontSize: '18px', fontWeight: 900, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <RefreshCw size={22} color="#1cb0f6" />
-                App Updates
+                About SignLens
               </div>
               <div className="duo-settings-row">
                 <div>
                   <div style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>Version {pkg.version}</div>
-                  <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>{updateStatus}</div>
+                  <div style={{ fontSize: '13px', color: '#afbac0', fontWeight: 700 }}>{desktop ? updateStatus : 'Web edition · Camera processing runs on this device.'}</div>
                 </div>
-                <button
+                {desktop && <button
                   className="duo-btn duo-btn-blue"
                   style={{ padding: '10px 22px' }}
-                  onClick={() => checkForUpdates(false)}
+                  onClick={checkForUpdates}
                   disabled={updateBusy}
                 >
                   {updateBusy ? 'Checking...' : 'Check for Updates'}
-                </button>
+                </button>}
+              </div>
+              <button className="sl-button sl-secondary" onClick={() => {
+                navigateTo('onboarding')
+                setOnboardStep(2)
+              }}>Test your camera</button>
+              <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
+                SignLens gives practice feedback for isolated signs using one tracked hand.
               </div>
               <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
-                Pulled from github.com/JmDemisana/SignLens releases. Only this check uses the network.
-              </div>
-              <div style={{ fontSize: '12px', color: '#afbac0', fontWeight: 700 }}>
-                3D hand model “Rigged Hand” by J-Toastie, CC-BY. MediaPipe hand and pose models by Google.
+                Signer videos are credited with each demonstration. MediaPipe hand and pose models by Google.
               </div>
             </div>
           </div>
         )}
       </main>
 
-      {/* Offline status footer */}
       <footer className="duo-status-footer">
-        100% offline • Camera never leaves this device • {isCameraLive ? 'Camera live' : 'Camera off'}
+        {isCameraLive ? 'Camera on' : 'Camera off'}
       </footer>
     </div>
   )

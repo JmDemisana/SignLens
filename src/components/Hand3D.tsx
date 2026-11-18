@@ -72,11 +72,11 @@ export default function Hand3D({
 
     const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(skin), roughness: 0.62, metalness: 0.02 })
     // One hue per digit so curled fingers read separately in a fist.
-    const fingerMats = [0xd98a5f, 0x58cc02, 0x1cb0f6, 0xce82ff, 0xffc800].map(
-      (c) => new THREE.MeshStandardMaterial({ color: new THREE.Color(skin).lerp(new THREE.Color(c), 0.45), roughness: 0.6, metalness: 0.02 }),
+    const fingerMats = [0xfacc15, 0x38bdf8, 0x4ade80, 0xc084fc, 0xf472b6].map(
+      (c) => new THREE.MeshStandardMaterial({ color: new THREE.Color(skin).lerp(new THREE.Color(c), 0.52), roughness: 0.55, metalness: 0.04 }),
     )
-    const tipMats = [0xd98a5f, 0x58cc02, 0x1cb0f6, 0xce82ff, 0xffc800].map(
-      (c) => new THREE.MeshStandardMaterial({ color: new THREE.Color(c), roughness: 0.35, metalness: 0.2, emissive: new THREE.Color(c), emissiveIntensity: 0.45 }),
+    const tipMats = [0xfacc15, 0x38bdf8, 0x4ade80, 0xc084fc, 0xf472b6].map(
+      (c) => new THREE.MeshStandardMaterial({ color: new THREE.Color(c), roughness: 0.35, metalness: 0.2, emissive: new THREE.Color(c), emissiveIntensity: 0.5 }),
     )
 
     const fx = flip ? -1 : 1
@@ -207,11 +207,11 @@ export default function Hand3D({
       <div style={{ fontSize: '11px', color: '#afbac0', fontWeight: 700, textAlign: 'center', marginTop: '4px' }}>
         3D hand • drag to rotate •{' '}
         {[
-          ['Thumb', '#d98a5f'],
-          ['Index', '#58cc02'],
-          ['Middle', '#1cb0f6'],
-          ['Ring', '#ce82ff'],
-          ['Pinky', '#ffc800'],
+          ['Thumb', '#facc15'],
+          ['Index', '#38bdf8'],
+          ['Middle', '#4ade80'],
+          ['Ring', '#c084fc'],
+          ['Pinky', '#f472b6'],
         ].map(([n, c], i, a) => (
           <span key={n}>
             <span style={{ color: c }}>●</span> {n}

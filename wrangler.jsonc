@@ -1,0 +1,9 @@
+{
+  "name": "signlens",
+  "account_id": "6884b0fb4c10dc38330556bb99afb06f",
+  "compatibility_date": "2026-11-17",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist"
+  }
+}

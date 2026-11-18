@@ -6,10 +6,10 @@ import type { HandLandmarks } from './types'
 // proportions survive and every letter bends real geometry.
 const CHAINS: { bones: string[]; joints: number[][] }[] = [
   { bones: ['ThumbRoot', 'ThumbMiddle', 'ThumbTop'], joints: [[1, 2], [2, 3], [3, 4]] },
-  { bones: ['IndexRoot', 'IndexF_lower', 'IndexF_middle', 'IndexF_tip'], joints: [[5, 6], [6, 7], [7, 8], [7, 8]] },
-  { bones: ['MiddleRoot', 'MiddleF_lower', 'MiddleF_middle', 'MiddleF_tip'], joints: [[9, 10], [10, 11], [11, 12], [11, 12]] },
-  { bones: ['RingRoot', 'RingF_lower', 'RingF_middle', 'RingF_tip'], joints: [[13, 14], [14, 15], [15, 16], [15, 16]] },
-  { bones: ['PinkyRoot', 'PinkyF_lower', 'PinkyF_middle', 'PinkyF_tip'], joints: [[17, 18], [18, 19], [19, 20], [19, 20]] },
+  { bones: ['IndexRoot', 'IndexF_lower', 'IndexF_middle', 'IndexF_tip'], joints: [[0, 5], [5, 6], [6, 7], [7, 8]] },
+  { bones: ['MiddleRoot', 'MiddleF_lower', 'MiddleF_middle', 'MiddleF_tip'], joints: [[0, 9], [9, 10], [10, 11], [11, 12]] },
+  { bones: ['RingRoot', 'RingF_lower', 'RingF_middle', 'RingF_tip'], joints: [[0, 13], [13, 14], [14, 15], [15, 16]] },
+  { bones: ['PinkyRoot', 'PinkyF_lower', 'PinkyF_middle', 'PinkyF_tip'], joints: [[0, 17], [17, 18], [18, 19], [19, 20]] },
 ]
 
 export interface Rig {
@@ -35,7 +35,7 @@ export function indexRig(root: THREE.Object3D): Rig {
       // Rest direction toward its child joint (next bone's origin).
       const idx = chain.bones.indexOf(b)
       const nextName = chain.bones[idx + 1]
-      const next = nextName ? bones.get(nextName) : null
+      const next = bones.get(nextName ?? `${b}_end`)
       if (next) {
         next.getWorldPosition(tmp)
         const here = bone.getWorldPosition(new THREE.Vector3())
@@ -53,6 +53,8 @@ export function indexRig(root: THREE.Object3D): Rig {
       }
     }
   }
+  const palm = bones.get('HandMain')
+  if (palm) restQuat.set(palm.name, palm.getWorldQuaternion(new THREE.Quaternion()))
   return { bones, restDir, restQuat }
 }
 
@@ -66,6 +68,17 @@ export function poseRig(rig: Rig, lm: HandLandmarks, flip: boolean): void {
   const newWorld = new THREE.Quaternion()
   const invParent = new THREE.Quaternion()
   const target = new THREE.Vector3()
+  const palm = rig.bones.get('HandMain')
+  const palmRest = rig.restQuat.get('HandMain')
+  const axis = P(9).sub(P(0))
+  const roll = Math.atan2(-axis.x, axis.y) - Math.atan2(0.071, 0.562)
+  const palmTurn = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll)
+  const unturn = palmTurn.clone().invert()
+  if (palm?.parent && palmRest) {
+    palm.parent.getWorldQuaternion(invParent).invert()
+    palm.quaternion.copy(invParent).multiply(palmTurn).multiply(palmRest)
+    palm.updateWorldMatrix(true, true)
+  }
   // Depth order: roots, then deeper joints, so parents settle first.
   const maxDepth = Math.max(...CHAINS.map((c) => c.bones.length))
   for (let d = 0; d < maxDepth; d++) {
@@ -79,9 +92,9 @@ export function poseRig(rig: Rig, lm: HandLandmarks, flip: boolean): void {
       const [a, b] = chain.joints[d]
       target.copy(P(b)).sub(P(a))
       if (target.lengthSq() < 1e-10) continue
-      target.normalize()
+      target.normalize().applyQuaternion(unturn)
       align.setFromUnitVectors(rest, target)
-      newWorld.copy(align).multiply(restQ)
+      newWorld.copy(palmTurn).multiply(align).multiply(restQ)
       bone.parent?.getWorldQuaternion(invParent).invert()
       bone.quaternion.copy(invParent).multiply(newWorld)
       bone.updateWorldMatrix(true, false)

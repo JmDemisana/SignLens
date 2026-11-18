@@ -74,7 +74,7 @@ async function bakeClip(pose: HandLandmarks, path: Vec3[] | undefined, flip: boo
 
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(38, W / H, 0.1, 100)
-    camera.position.set(0, 0.05, 2.6)
+    camera.position.set(0, 0, 2.9)
     camera.lookAt(0, 0, 0)
     scene.add(new THREE.HemisphereLight(0xfff4e6, 0x1a2530, 1.1))
     const kl = new THREE.DirectionalLight(0xffffff, 1.5)

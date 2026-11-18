@@ -22,9 +22,11 @@ export function angleBetween(a: Vec3, b: Vec3, c: Vec3): number {
 
 // MediaPipe hand indices:
 // 0 wrist, 1-4 thumb, 5-8 index, 9-12 middle, 13-16 ring, 17-20 pinky
-export function fingerAngles(lm: HandLandmarks): number[] {
+export function fingerAngles(lm: HandLandmarks, aspect = 1): number[] {
   if (!lm || lm.length < 21) return []
-  const A = (a: number, b: number, c: number) => angleBetween(lm[a], lm[b], lm[c])
+  // MediaPipe normalizes x and y against different frame dimensions.
+  const points = lm.map(({ x, y, z }) => ({ x: x * aspect, y, z: z * aspect }))
+  const A = (a: number, b: number, c: number) => angleBetween(points[a], points[b], points[c])
   return [
     A(0, 1, 2), // thumb MCP spread
     A(1, 2, 3), // thumb IP bend
@@ -49,13 +51,17 @@ export function palmCenter(lm: HandLandmarks): Vec3 {
   return s
 }
 
-export function scoreStatic(live: number[], target: number[], tolerance = 26): { score: number; perJoint: number[] } {
-  // 6-degree deadzone: MediaPipe jitters a few degrees frame to frame, and
-  // fingers that look touching still read a small gap. Below this floor
-  // everything counts as perfect so the matcher stops punishing noise.
-  const perJoint = live.map((v, i) => Math.max(0, Math.abs(v - (target[i] ?? v)) - 6))
+export function scoreStatic(live: number[], target: number[], tolerance = 32): { score: number; perJoint: number[] } {
+  if (live.length !== 11 || target.length !== 11 || [...live, ...target].some((value) => !Number.isFinite(value))) {
+    return { score: 0, perJoint: [] }
+  }
+  // 8-degree deadzone for monocular landmark jitter
+  const perJoint = live.map((v, i) => Math.max(0, Math.abs(v - (target[i] ?? v)) - 8))
   const avg = perJoint.reduce((a, b) => a + b, 0) / Math.max(1, perJoint.length)
-  // Linear falloff: 0 offset = 100, tolerance = ~67, 3x tolerance = 0
-  const score = Math.max(0, Math.min(100, 100 - (avg / (tolerance * 3)) * 100))
+  const maxJointErr = Math.max(...perJoint, 0)
+  // Penalize any individual finger joint that deviates beyond 24 deg so a wrong single finger cannot be hidden by the 11-joint average
+  const effectiveErr = avg + Math.max(0, maxJointErr - 24) * 0.55
+  void tolerance
+  const score = Math.max(0, Math.min(100, 100 * Math.exp(-0.032 * effectiveErr)))
   return { score, perJoint }
 }

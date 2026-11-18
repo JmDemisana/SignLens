@@ -1,32 +1,26 @@
-# React + TypeScript + Vite
+# SignLens
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+SignLens is an offline webcam-based practice mirror for **Filipino Sign Language (FSL)** using on-device MediaPipe landmark tracking, geometric joint-angle vectors, Fast Dynamic Time Warping (FastDTW), and deterministic rule-based biomechanical coaching.
 
-Currently, two official plugins are available:
+## Architecture & Scope
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Filipino Sign Language (FSL) Scope**: Covers the 26-letter FSL manual alphabet (`A-Z`), digits `0-9`, and isolated dynamic FSL vocabulary across greetings, courtesy, responses, family, daily needs, and school, plus the 105-sign FSL-105 reference video library.
+- **On-Device Landmark Extraction**: Extracts 21 3D hand landmarks and upper-body pose coordinates locally via MediaPipe Tasks Vision (`@mediapipe/tasks-vision`) with zero cloud video streaming.
+- **Static & Dynamic Verification**:
+  - Static handshapes are scored via scale-invariant finger joint-angle vectors with an automated **1.5 s (Learn)** / **2.0 s (Letters)** hold-timer gate (`>= 85%` threshold).
+  - Dynamic FSL signs are segmented via wrist-velocity motion gating and aligned against bundled reference trajectories using **FastDTW** (`>= 80%` threshold).
+- **Rule-Based Biomechanical Coaching & Adaptive Retry Queue**: Maps the largest per-joint angular or trajectory residual to a verified English corrective cue (with zero generative AI / zero LLMs) and appends missed items to the lesson queue (`t = t + 1`) until all items are cleared (`n = t + 1`).
+- **Bidirectional Sign-to-Word Optical Dictionary**: Supports both text search and live camera sign-to-word top-3 lookup across bundled FSL templates.
+- **CSV Telemetry Logger**: Built-in telemetry recorder in **Settings** exports per-attempt CSV logs (`timestamp, target_sign, kind, score_0_100, mean_angular_error_deg, passed, frame_latency_ms`) for empirical protocol evaluation.
 
-## React Compiler
+## Development & Verification
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Use Node.js 20+ and `pnpm`:
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+pnpm install --frozen-lockfile
+pnpm run lint
+pnpm run build
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The desktop shell is located in `src-tauri/` (Tauri 2 + Rust).
