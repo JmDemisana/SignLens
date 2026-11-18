@@ -222,7 +222,7 @@ export default function App() {
     setTelemetryCount(0)
     setCourseProgress(resetCourseProgress(lang))
     saveSession(lang, null)
-    setSession(createLessonSession(lang, 'home', createLesson(signsFor(lang).slice(0, 4))))
+    setSession(null)
     setSavedSigns([])
     setProgressRec(getProgress())
     setPracticeDays(getPracticeDays())
