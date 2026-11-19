@@ -16,7 +16,8 @@ import WebcamVideo from './components/WebcamVideo'
 import { useCamera } from './hooks/useCamera'
 import { appendTelemetryRow, clearTelemetryRows, exportTelemetryCsv, getTelemetryRows, useSignCheck } from './hooks/useSignCheck'
 import { coachAdvice, summarizeSession } from './engine/coach'
-import { definitionFor } from './engine/dictionary'
+import { definitionFor, howToFor } from './engine/dictionary'
+import { signImageFor, signVideoFor } from './engine/signVideos'
 import { createLesson, currentItem, isFinished } from './engine/lesson'
 import { completeCourseLesson, findCourseLesson, getCourseProgress, itemsForLesson, lessonStars, resetCourseProgress, signsFor } from './engine/course'
 import { clearPersonalAngles, isCalibrated, savePersonalAngles } from './engine/personal'
@@ -85,6 +86,7 @@ function PracticeApp() {
   const [learnHoldMs, setLearnHoldMs] = useState(0)
   const [telemetryCount, setTelemetryCount] = useState(() => getTelemetryRows().length)
   const [confirmResetAll, setConfirmResetAll] = useState(false)
+  const [pipExpanded, setPipExpanded] = useState(false)
   const [savedSigns, setSavedSigns] = useState(getPracticeList)
   const [progressRec, setProgressRec] = useState(getProgress)
   const [practiceDays, setPracticeDays] = useState(getPracticeDays)
@@ -769,6 +771,34 @@ function PracticeApp() {
                               : 'SHOW HAND'}
                 </div>
                 {practiceCamera && !cameraError && <button className="sl-camera-off" onClick={() => setPracticeCamera(false)}>Turn off camera</button>}
+                {(() => {
+                  const pipVideo = signVideoFor(learnTarget, lang)
+                  const pipImage = !pipVideo ? signImageFor(learnTarget) : null
+                  if (!pipVideo && !pipImage) return null
+                  return (
+                    <button
+                      type="button"
+                      className={`sl-mobile-pip${pipExpanded ? ' is-expanded' : ''}`}
+                      onClick={() => setPipExpanded((v) => !v)}
+                      aria-label={pipExpanded ? 'Minimize instructor video' : 'Expand instructor video'}
+                    >
+                      {pipVideo ? (
+                        <video
+                          key={pipVideo}
+                          src={pipVideo}
+                          autoPlay
+                          loop
+                          muted
+                          playsInline
+                          preload="auto"
+                        />
+                      ) : (
+                        <img src={pipImage!} alt={`Reference for ${learnTarget}`} style={hand === 'Left' ? { transform: 'scaleX(-1)' } : undefined} />
+                      )}
+                      <span className="sl-mobile-pip-tag">{pipExpanded ? 'Tap to shrink' : 'Instructor'}</span>
+                    </button>
+                  )
+                })()}
                 {!practiceCamera && <div className="sl-scan-placeholder"><Camera size={30} /><button className="duo-btn duo-btn-blue" onClick={() => setPracticeCamera(true)}>Turn on camera</button></div>}
                 {cameraError && (
                   <div className="duo-camera-error-banner">
@@ -802,6 +832,10 @@ function PracticeApp() {
                   activeStep={session?.step ?? 0}
                   flip={hand === 'Left'}
                 />
+
+                <p className="sl-mobile-cue">
+                  {howToFor(learnTarget).start} {howToFor(learnTarget).motion}
+                </p>
 
                 {isCameraLive && live.ready && <LiveCoachPanel detail={live.detail} landmarks={live.landmarks} advice={liveAdvice} motion={learnTemplate?.kind === 'dynamic'} holdLabel={!learnMotion && learnPassed ? `Hold ${(learnHoldMs / 1000).toFixed(1)}s` : undefined} />}
               </div>
