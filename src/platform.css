@@ -1532,40 +1532,131 @@ html, body, #root {
 }
 
 .sl-window-notice {
-  display: none;
+  display: none !important;
+}
+
+/* ========================================================================= */
+/* ANDROID PHONE & TABLET RESPONSIVE POLISH (Capacitor + Mobile Web)         */
+/* ========================================================================= */
+html, body, #root {
+  max-width: 100%;
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.duo-header.sl-header {
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-left: max(14px, env(safe-area-inset-left));
+  padding-right: max(14px, env(safe-area-inset-right));
+}
+
+.sl-main, .duo-main-content {
+  padding-bottom: max(24px, calc(16px + env(safe-area-inset-bottom)));
 }
 
 @media (max-width: 1080px) {
-  .duo-header.sl-header { height: auto; }
-}
-
-@media (max-width: 800px), (max-height: 600px) {
-  .sl-window-notice {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
-    max-width: 1080px;
-    margin: 0 auto 12px;
-    padding: 12px 16px;
-    border: 1px solid #4684a0;
-    border-radius: 10px;
-    background: #183746;
-    color: #e0f2fe;
-    font-size: 14px;
+  .duo-header.sl-header {
+    height: auto;
+    min-height: 64px;
+    gap: 8px;
   }
-  .sl-window-notice > span:first-of-type { flex: 1 1 200px; }
+  .sl-roadmap {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .sl-roadmap-aside {
+    position: static;
+  }
   .duo-quiz-container, .duo-quiz-body, .duo-prompt-card {
     height: auto;
     max-height: none;
     overflow: visible;
     flex: none;
   }
-  .duo-quiz-body .duo-camera-card { height: auto; aspect-ratio: 16 / 9; min-height: 180px; }
+  .duo-quiz-body, .alpha-split, .sl-dict-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .duo-quiz-body .duo-camera-card,
+  .dict-split .duo-camera-card,
+  .alpha-split .duo-camera-card {
+    height: auto;
+    aspect-ratio: 4 / 3;
+    min-height: 240px;
+    max-height: 54vh;
+  }
 }
 
-@media (max-width: 800px) {
-  .duo-quiz-body, .alpha-split, .sl-dict-layout { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 640px) {
+  .duo-header.sl-header {
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-bottom: 8px;
+    padding-inline: 12px;
+  }
+  .sl-header .duo-brand {
+    font-size: 18px;
+    gap: 8px;
+  }
+  .sl-header .duo-brand-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+  }
+  .sl-header .duo-nav-links {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 5px;
+    width: 100%;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+  .sl-header .duo-nav-item {
+    justify-content: center;
+    padding: 8px 4px;
+    font-size: 11px;
+    gap: 4px;
+    flex-direction: column;
+  }
+  .sl-main, .duo-main-content {
+    padding: 12px 12px max(24px, calc(16px + env(safe-area-inset-bottom)));
+  }
+  .duo-quiz-body .duo-camera-card,
+  .dict-split .duo-camera-card,
+  .alpha-split .duo-camera-card {
+    min-height: 220px;
+    max-height: 44vh;
+  }
+  .sl-ref-viewport {
+    height: 150px !important;
+  }
+  .duo-prompt-title {
+    font-size: 22px !important;
+  }
+  .duo-bottom-bar {
+    flex-direction: row;
+    gap: 10px;
+  }
+  .duo-bottom-bar > button {
+    flex: 1 1 0;
+    min-height: 46px;
+    justify-content: center;
+  }
+  .duo-alphabet-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .duo-settings-row {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .duo-settings-row select,
+  .duo-settings-row input[type="range"] {
+    max-width: 100%;
+    width: 100%;
+  }
+  .sl-diagnostics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .sl-celebration-stars span {

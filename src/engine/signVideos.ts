@@ -43,7 +43,7 @@ export function fslVideoInfo(sign: string) {
 export function signVideoFor(sign: string, lang: SignLang): string | null {
   void lang
   const item = fslVideoInfo(sign)
-  return item ? `${import.meta.env.BASE_URL}sign-videos/fsl105/${item.id}.mov` : null
+  return item ? `${import.meta.env.BASE_URL}sign-videos/fsl105/${item.id}.mp4` : null
 }
 
 export function signImageFor(sign: string): string | null {

@@ -72,9 +72,9 @@ export default function VideoCalibrator() {
     for (let i = 0; i < fslVideoEntries.length; i++) {
       const entry = fslVideoEntries[i]
       setProgress(i + 1)
-      setStatus(`Extracting [${i + 1}/${fslVideoEntries.length}] ${entry.sign} (${entry.id}.mov)...`)
+      setStatus(`Extracting [${i + 1}/${fslVideoEntries.length}] ${entry.sign} (${entry.id}.mp4)...`)
       try {
-        await loadVideoSrc(video, `${import.meta.env.BASE_URL}sign-videos/fsl105/${entry.id}.mov`)
+        await loadVideoSrc(video, `${import.meta.env.BASE_URL}sign-videos/fsl105/${entry.id}.mp4`)
         const dur = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 3.5
         const aspect = video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9
         const tpl = findTemplate(entry.sign)

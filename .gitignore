@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 src-tauri/target/
+android/app/src/main/assets/public/
+android/build/
+android/app/build/
+android/.gradle/
 
 # Editor directories and files
 .vscode/*
